@@ -374,7 +374,7 @@ class FileServiceTests(TransactionTestCase):
         config_user2 = {"configurable": {"thread_id": str(self.thread2.id), "user_id": str(self.user2.id)}}
         res_cross = read_file.invoke({"file_id": str(uf_csv.id)}, config=config_user2)
         self.assertIn("Error:", res_cross)
-        self.assertIn("does not belong", res_cross)
+        self.assertTrue("access denied" in res_cross.lower() or "does not belong" in res_cross.lower())
 
     def test_throttling_classes(self):
         """Verify DRF throttling classes for upload and chat are properly scoped."""

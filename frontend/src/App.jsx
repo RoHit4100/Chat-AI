@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { useChatStream } from "./hooks/useChatStream";
-import { initAuth, getToken, getUserInfo } from "./auth";
+import { initAuth, getToken, getUserInfo, handleAuthSessionExpired } from "./auth";
 
 export default function App() {
   const [threads, setThreads] = useState([]);
@@ -40,6 +40,10 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
       });
+      if (res.status === 401) {
+        handleAuthSessionExpired();
+        return [];
+      }
       if (res.ok) {
         const data = await res.json();
         setThreads(data);

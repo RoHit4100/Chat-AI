@@ -58,10 +58,15 @@ export function Sidebar({
                   if (onClose) onClose();
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden", flex: 1, minWidth: 0 }}>
                   <MessageSquare size={14} style={{ flexShrink: 0, opacity: 0.7 }} />
                   <span className="thread-title">{t.title || "Untitled Conversation"}</span>
                 </div>
+                {t.total_tokens > 0 && (
+                  <span className="thread-tokens-badge" title={`${t.total_tokens} total tokens`}>
+                    {t.total_tokens.toLocaleString()} t
+                  </span>
+                )}
                 <button
                   className="thread-delete-btn"
                   onClick={(e) => {

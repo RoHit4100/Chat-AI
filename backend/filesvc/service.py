@@ -50,5 +50,49 @@ class FileService:
         """Asynchronously run file parsing offloaded to a worker thread."""
         return await asyncio.to_thread(self.parse_file_sync, file_id)
 
+    def cleanup_orphaned_uploads(self, older_than_hours: int = 24, dry_run: bool = False) -> dict:
+        """Find and clean up uploaded files never attached to a message beyond the cutoff age."""
+        import os
+        from datetime import timedelta
+        from django.utils import timezone
+
+        cutoff = timezone.now() - timedelta(hours=older_than_hours)
+        orphans = list(UploadedFile.objects.filter(message__isnull=True, created_at__lte=cutoff))
+
+        count = 0
+        bytes_freed = 0
+        details = []
+
+        for uf in orphans:
+            file_size = uf.size or 0
+            details.append({"id": uf.id, "name": uf.name, "size": file_size, "path": uf.path})
+            if not dry_run:
+                if uf.path and os.path.exists(uf.path):
+                    try:
+                        os.remove(uf.path)
+                    except Exception as exc:
+                        logger.warning("Failed to delete raw orphan file %s: %s", uf.path, exc)
+                if uf.parsed_path and os.path.exists(uf.parsed_path):
+                    try:
+                        os.remove(uf.parsed_path)
+                    except Exception as exc:
+                        logger.warning("Failed to delete parsed orphan file %s: %s", uf.parsed_path, exc)
+                uf.delete()
+            count += 1
+            bytes_freed += file_size
+
+        logger.info(
+            "Orphaned uploads cleanup (%s): %s files, %s bytes freed",
+            "dry-run" if dry_run else "executed",
+            count,
+            bytes_freed,
+        )
+        return {"count": count, "bytes_freed": bytes_freed, "files": details, "dry_run": dry_run}
+
 # Global service instance
 file_service = FileService()
+
+def cleanup_orphaned_uploads(older_than_hours: int = 24, dry_run: bool = False) -> dict:
+    """Convenience module function for cleaning up orphaned uploads."""
+    return file_service.cleanup_orphaned_uploads(older_than_hours=older_than_hours, dry_run=dry_run)
+

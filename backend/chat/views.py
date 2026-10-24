@@ -32,6 +32,31 @@ class ThreadViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    def perform_destroy(self, instance):
+        """Clean up disk files and checkpoints when a thread is deleted to prevent bloat."""
+        for uf in instance.uploaded_files.all():
+            if uf.path and os.path.exists(uf.path):
+                try:
+                    os.remove(uf.path)
+                except Exception:
+                    pass
+            if uf.parsed_path and os.path.exists(uf.parsed_path):
+                try:
+                    os.remove(uf.parsed_path)
+                except Exception:
+                    pass
+
+        for gf in instance.generated_files.all():
+            if gf.path and os.path.exists(gf.path):
+                try:
+                    os.remove(gf.path)
+                except Exception:
+                    pass
+
+        from agent.checkpointer import delete_thread_checkpoints
+        delete_thread_checkpoints(str(instance.id))
+        instance.delete()
+
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
         thread = self.get_object()
@@ -103,8 +128,19 @@ async def stream_thread_view(request, id):
             content_type="application/json",
         )
 
+    attached_file_ids = body.get("files", [])
+
     # Save user message to database
-    await Message.objects.acreate(thread=thread, role="user", content=user_content, status="complete")
+    user_msg = await Message.objects.acreate(thread=thread, role="user", content=user_content, status="complete")
+
+    # Link attached files belonging to this thread to prevent orphaned uploads
+    if attached_file_ids and isinstance(attached_file_ids, list):
+        from chat.models import UploadedFile
+        await UploadedFile.objects.filter(
+            id__in=attached_file_ids,
+            thread=thread,
+            message__isnull=True,
+        ).aupdate(message=user_msg)
 
     # Auto-generate thread title from first message
     msg_count = await Message.objects.filter(thread=thread).acount()

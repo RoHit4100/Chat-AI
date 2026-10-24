@@ -56,3 +56,54 @@ async def get_checkpointer():
     if checkpointer_manager.saver is None:
         await checkpointer_manager.start()
     return checkpointer_manager.saver
+
+async def adelete_thread_checkpoints(thread_id: str):
+    """Delete all checkpoint records for a thread from the checkpointer to prevent orphaned storage bloat."""
+    saver = await get_checkpointer()
+    if isinstance(saver, MemorySaver):
+        saver.storage.pop(str(thread_id), None)
+        if hasattr(saver, "writes"):
+            saver.writes.pop(str(thread_id), None)
+        return
+
+    if checkpointer_manager.pool is not None:
+        try:
+            async with checkpointer_manager.pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("DELETE FROM checkpoints WHERE thread_id = %s", (str(thread_id),))
+                    await cur.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (str(thread_id),))
+                    await cur.execute("DELETE FROM checkpoint_blobs WHERE thread_id = %s", (str(thread_id),))
+            logger.info("Deleted postgres checkpoints for thread %s", thread_id)
+        except Exception as exc:
+            logger.warning("Failed to delete postgres checkpoints for thread %s: %s", thread_id, exc)
+
+def delete_thread_checkpoints(thread_id: str):
+    """Synchronous wrapper to delete checkpoints for a thread."""
+    try:
+        from asgiref.sync import async_to_sync
+        async_to_sync(adelete_thread_checkpoints)(thread_id)
+    except Exception as exc:
+        logger.warning("delete_thread_checkpoints failed: %s", exc)
+
+async def aprune_thread_checkpoints(thread_id: str, keep_last: int = 10):
+    """Prune older checkpoint records for a thread to prevent database bloat."""
+    if checkpointer_manager.pool is not None:
+        try:
+            async with checkpointer_manager.pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        DELETE FROM checkpoints
+                        WHERE thread_id = %s
+                          AND checkpoint_id NOT IN (
+                              SELECT checkpoint_id FROM checkpoints
+                              WHERE thread_id = %s
+                              ORDER BY checkpoint_id DESC
+                              LIMIT %s
+                          )
+                        """,
+                        (str(thread_id), str(thread_id), keep_last),
+                    )
+            logger.info("Pruned older checkpoints for thread %s (kept %s)", thread_id, keep_last)
+        except Exception as exc:
+            logger.debug("aprune_thread_checkpoints skipped/failed for %s: %s", thread_id, exc)

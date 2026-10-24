@@ -70,6 +70,11 @@ export function ChatView({
           <span className="current-thread-title">
             {thread?.title || "New Conversation"}
           </span>
+          {thread?.total_tokens > 0 && (
+            <span className="header-tokens-pill" title={`${thread.total_tokens} total tokens used`}>
+              ⚡ {thread.total_tokens.toLocaleString()} tokens
+            </span>
+          )}
         </div>
       </header>
 

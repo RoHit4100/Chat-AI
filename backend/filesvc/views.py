@@ -11,7 +11,7 @@ from chat.models import Thread, UploadedFile
 from chat.serializers import UploadedFileSerializer
 from filesvc.service import file_service
 from filesvc.storage import storage
-from filesvc.throttles import UploadRateThrottle
+from filesvc.throttles import UploadRateThrottle, ChatRateThrottle
 from filesvc.validators import (
     MAX_REQUEST_SIZE_BYTES,
     MAX_FILE_SIZE_BYTES,
@@ -102,6 +102,7 @@ class ThreadFilesView(APIView):
 class ThreadGeneratedFilesView(APIView):
     """List all generated files belonging to a specific thread."""
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
 
     def get(self, request, thread_id):
         from chat.models import GeneratedFile
@@ -116,6 +117,7 @@ class ThreadGeneratedFilesView(APIView):
 class FileDownloadView(APIView):
     """Authenticated endpoint to download uploaded files with security headers."""
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UploadRateThrottle]
 
     def get(self, request, file_id):
         """Download file verifying ownership, setting nosniff, and preventing inline HTML/SVG execution."""
@@ -143,6 +145,7 @@ class FileDownloadView(APIView):
 class GeneratedFileDownloadView(APIView):
     """Authenticated endpoint to download generated files with security headers."""
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UploadRateThrottle]
 
     def get(self, request, file_id):
         """Download generated file verifying ownership, setting nosniff, and preventing inline execution."""

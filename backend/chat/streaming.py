@@ -158,5 +158,9 @@ async def stream_chat_turn(
                 output_tokens=final_output_tokens,
             )
 
+        # Prune older checkpoint snapshots to prevent database bloat
+        from agent.checkpointer import aprune_thread_checkpoints
+        await aprune_thread_checkpoints(thread_id, keep_last=10)
+
         # Release thread concurrency lock
         await release_stream_lock(thread_id)

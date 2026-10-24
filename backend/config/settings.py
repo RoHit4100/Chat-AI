@@ -38,6 +38,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "config.middleware.RequestLoggingMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -156,3 +157,49 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_REQUEST_SIZE_BYTES
 FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_FILE_SIZE_BYTES
 MAX_ZIP_MEMBERS = int(os.getenv("MAX_ZIP_MEMBERS", "100"))
 MAX_ZIP_UNCOMPRESSED_SIZE = int(os.getenv("MAX_ZIP_UNCOMPRESSED_SIZE", str(50 * 1024 * 1024)))
+
+# Structured logging configuration
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "config.logging.StructuredJsonFormatter",
+        },
+        "simple": {
+            "format": "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple" if "test" in sys.argv else "json",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.getenv("LOG_LEVEL", "INFO"),
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "chat": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "filesvc": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "agent": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}

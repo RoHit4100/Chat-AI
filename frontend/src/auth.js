@@ -9,6 +9,32 @@ const keycloak = new Keycloak({
 
 let isInitialized = false;
 
+// Handle session expiration by purging state and redirecting to login
+export function handleAuthSessionExpired() {
+  localStorage.clear();
+  sessionStorage.clear();
+  if (keycloak.authenticated) {
+    keycloak.login({
+      redirectUri: window.location.origin,
+    });
+  } else {
+    window.location.reload();
+  }
+}
+
+// Automatically handle token expiration and refresh errors
+keycloak.onTokenExpired = () => {
+  keycloak.updateToken(30).catch((err) => {
+    console.warn("Keycloak token refresh failed on expiry:", err);
+    handleAuthSessionExpired();
+  });
+};
+
+keycloak.onAuthRefreshError = () => {
+  console.warn("Keycloak onAuthRefreshError: refresh token invalid or revoked.");
+  handleAuthSessionExpired();
+};
+
 export async function initAuth() {
   if (isInitialized) return keycloak.authenticated;
 
@@ -35,7 +61,9 @@ export async function getToken() {
       await keycloak.updateToken(30);
       return keycloak.token;
     } catch (err) {
-      console.warn("Failed to refresh Keycloak token:", err);
+      console.warn("Failed to refresh Keycloak token (session expired):", err);
+      handleAuthSessionExpired();
+      return "";
     }
   }
 
@@ -50,12 +78,15 @@ export function login() {
 }
 
 export function logout() {
+  // Thoroughly clear all localStorage and sessionStorage to prevent cross-user thread bleed
+  localStorage.clear();
+  sessionStorage.clear();
+
   if (keycloak.authenticated) {
     keycloak.logout({
       redirectUri: window.location.origin,
     });
   } else {
-    localStorage.removeItem("auth_token");
     window.location.reload();
   }
 }

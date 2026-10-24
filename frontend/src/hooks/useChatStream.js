@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { getToken } from "../auth";
+import { getToken, handleAuthSessionExpired } from "../auth";
 
 export function useChatStream(threadId, onTitleGenerated) {
   const [messages, setMessages] = useState([]);
@@ -244,6 +244,10 @@ export function useChatStream(threadId, onTitleGenerated) {
         });
 
         if (!response.ok) {
+          if (response.status === 401) {
+            handleAuthSessionExpired();
+            throw new Error("Authentication session expired. Re-authenticating...");
+          }
           const errBody = await response.text();
           let msg = `Request failed (${response.status})`;
           try {
@@ -327,6 +331,10 @@ export function useChatStream(threadId, onTitleGenerated) {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          handleAuthSessionExpired();
+          throw new Error("Authentication session expired. Re-authenticating...");
+        }
         const errBody = await response.text();
         let msg = `Regenerate failed (${response.status})`;
         try {
