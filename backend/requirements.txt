@@ -1,0 +1,36 @@
+# Core framework
+Django==5.1.6
+djangorestframework==3.15.2
+django-cors-headers==4.7.0
+
+# Database
+psycopg2-binary==2.9.10
+
+# ASGI Server
+uvicorn==0.34.0
+asgiref==3.13.0
+
+# Authentication & Cryptography
+PyJWT==2.10.1
+cryptography==44.0.1
+
+# Environment
+python-dotenv==1.0.1
+
+# LangGraph & Core ecosystem
+langgraph==0.3.6
+langgraph-checkpoint==2.1.2
+langgraph-prebuilt==0.1.8
+langgraph-sdk==0.1.74
+langchain-core==0.3.86
+langsmith==0.14.12
+pydantic==2.14.1
+pydantic_core==2.50.1
+
+# Utilities
+requests==2.34.2
+urllib3==2.8.0
+sqlparse==0.6.0
+cffi==2.1.1
+pycparser==3.12
+tzdata==2026.5
