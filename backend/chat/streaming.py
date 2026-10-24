@@ -41,7 +41,7 @@ async def stream_chat_turn(
 ) -> AsyncIterator[str]:
     """Execute LangGraph astream and emit SSE events, persisting the result in finally."""
     thread_id = str(thread.id)
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id, "user_id": str(thread.user_id)}}
     graph = await get_compiled_graph()
 
     collected_content = ""

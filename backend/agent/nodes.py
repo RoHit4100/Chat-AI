@@ -31,6 +31,7 @@ def _fetch_file_manifest(thread_id: str) -> list[dict]:
             "mime": uf.mime,
             "size": uf.size,
             "status": uf.status,
+            "summary": uf.summary,
             "kind": "uploaded",
         })
 

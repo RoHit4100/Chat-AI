@@ -15,6 +15,7 @@ os.environ["USE_SQLITE"] = "1"
 # Lower threshold so compactions trigger regularly across 200 messages
 os.environ["MAX_TOKENS"] = "200"
 os.environ["KEEP_LAST"] = "8"
+os.environ["THROTTLE_RATE_CHAT"] = "10000/minute"
 
 import django
 django.setup()

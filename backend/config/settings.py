@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "chat.apps.ChatConfig",
+    "filesvc.apps.FilesvcConfig",
 ]
 
 MIDDLEWARE = [
@@ -113,6 +114,16 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/day",
+        "user": "1000/day",
+        "upload": os.getenv("THROTTLE_RATE_UPLOAD", "60/minute"),
+        "chat": os.getenv("THROTTLE_RATE_CHAT", "60/minute"),
+    },
 }
 
 # CORS settings for frontend communication
@@ -130,3 +141,17 @@ KEYCLOAK_PUBLIC_URL = os.getenv(
     "http://localhost:8080/realms/chat",
 )
 KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "chat-web")
+
+# File storage and upload limits
+media_env = os.getenv("MEDIA_ROOT")
+if media_env and not (os.name == "nt" and media_env.startswith("/")):
+    MEDIA_ROOT = media_env
+else:
+    MEDIA_ROOT = str(BASE_DIR / "media")
+MEDIA_URL = "/media/"
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_BYTES", str(25 * 1024 * 1024)))
+MAX_REQUEST_SIZE_BYTES = int(os.getenv("MAX_REQUEST_SIZE_BYTES", str(100 * 1024 * 1024)))
+DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_REQUEST_SIZE_BYTES
+FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_FILE_SIZE_BYTES
+MAX_ZIP_MEMBERS = int(os.getenv("MAX_ZIP_MEMBERS", "100"))
+MAX_ZIP_UNCOMPRESSED_SIZE = int(os.getenv("MAX_ZIP_UNCOMPRESSED_SIZE", str(50 * 1024 * 1024)))

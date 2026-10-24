@@ -10,6 +10,7 @@ from chat.authentication import aauthenticate_token
 from chat.models import Thread, Message
 from chat.serializers import ThreadSerializer, MessageSerializer, UserSerializer
 from chat.streaming import acquire_stream_lock, release_stream_lock, stream_chat_turn
+from filesvc.throttles import ChatRateThrottle
 
 class MeView(APIView):
     """Return profile details for the currently authenticated user."""
@@ -23,6 +24,7 @@ class ThreadViewSet(viewsets.ModelViewSet):
     """CRUD operations on conversation threads, strictly scoped to request.user."""
     serializer_class = ThreadSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
 
     def get_queryset(self):
         return Thread.objects.filter(user=self.request.user)
@@ -59,6 +61,11 @@ async def stream_thread_view(request, id):
     user = await _authenticate_async_request(request)
     if not user:
         return HttpResponse(json.dumps({"detail": "Unauthorized"}), status=401, content_type="application/json")
+
+    request.user = user
+    throttle = ChatRateThrottle()
+    if not throttle.allow_request(request, view=None):
+        return HttpResponse(json.dumps({"detail": "Request was throttled."}), status=429, content_type="application/json")
 
     try:
         thread = await Thread.objects.aget(id=id)
@@ -121,6 +128,11 @@ async def regenerate_thread_view(request, id):
     user = await _authenticate_async_request(request)
     if not user:
         return HttpResponse(json.dumps({"detail": "Unauthorized"}), status=401, content_type="application/json")
+
+    request.user = user
+    throttle = ChatRateThrottle()
+    if not throttle.allow_request(request, view=None):
+        return HttpResponse(json.dumps({"detail": "Request was throttled."}), status=429, content_type="application/json")
 
     try:
         thread = await Thread.objects.aget(id=id)
