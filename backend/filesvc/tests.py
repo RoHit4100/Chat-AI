@@ -11,14 +11,15 @@ import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from agent.tools import read_file
-from chat.models import Thread, UploadedFile
+from agent.tools import read_file, generate_file, read_generated_spec
+from chat.models import Thread, Message, UploadedFile, GeneratedFile
 from filesvc.storage import storage
 from filesvc.throttles import UploadRateThrottle, ChatRateThrottle
+from filesvc.generators.registry import get_generator, summarize_spec
 
 User = get_user_model()
 
@@ -42,7 +43,7 @@ def make_test_token(sub="test-user-sub-1", email="user1@example.com"):
     }
     return jwt.encode(payload, TEST_PRIVATE_KEY, algorithm="RS256", headers={"kid": "test-kid"})
 
-class FileServiceTests(TestCase):
+class FileServiceTests(TransactionTestCase):
     """Comprehensive test suite for file uploading, parsing, security, download, and tools."""
 
     def setUp(self):
@@ -381,3 +382,275 @@ class FileServiceTests(TestCase):
         chat_throttle = ChatRateThrottle()
         self.assertEqual(upload_throttle.scope, "upload")
         self.assertEqual(chat_throttle.scope, "chat")
+
+    def test_each_generator_opens_correctly_and_contains_spec_content(self):
+        """Verify each generator creates a valid file that can be opened and contains spec content."""
+        import csv
+        import docx
+        import openpyxl
+        from PIL import Image
+        from pptx import Presentation
+        from pypdf import PdfReader
+
+        gen_dir = self.sample_dir / "generated_test_output"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. DOCX
+        docx_path = str(gen_dir / "test.docx")
+        docx_spec = {
+            "title": "Quarterly Performance",
+            "sections": [{"heading": "Executive Summary", "content": "Revenue grew by 24 percent."}],
+            "tables": [{"headers": ["Metric", "Value"], "rows": [["Q1", "$1.2M"], ["Q2", "$1.5M"]]}],
+        }
+        get_generator("docx").generate(docx_spec, docx_path)
+        doc = docx.Document(docx_path)
+        self.assertEqual(doc.paragraphs[0].text, "Quarterly Performance")
+        self.assertIn("Revenue grew", doc.paragraphs[2].text)
+        self.assertEqual(doc.tables[0].rows[1].cells[0].text, "Q1")
+
+        # 2. PDF
+        pdf_path = str(gen_dir / "test.pdf")
+        pdf_spec = {
+            "title": "Annual Audit Report",
+            "sections": [{"heading": "Findings", "content": "All compliance criteria met."}],
+        }
+        get_generator("pdf").generate(pdf_spec, pdf_path)
+        reader = PdfReader(pdf_path)
+        self.assertGreaterEqual(len(reader.pages), 1)
+        pdf_text = reader.pages[0].extract_text()
+        self.assertIn("Annual Audit Report", pdf_text)
+        self.assertIn("All compliance criteria met", pdf_text)
+
+        # 3. XLSX
+        xlsx_path = str(gen_dir / "test.xlsx")
+        xlsx_spec = {
+            "sheet_name": "Sales",
+            "headers": ["Product", "Units", "Revenue"],
+            "rows": [["Widget A", 150, 4500], ["Widget B", 80, 3200]],
+        }
+        get_generator("xlsx").generate(xlsx_spec, xlsx_path)
+        wb = openpyxl.load_workbook(xlsx_path)
+        ws = wb["Sales"]
+        self.assertEqual(ws.cell(1, 1).value, "Product")
+        self.assertEqual(ws.cell(2, 2).value, 150)
+
+        # 4. CSV
+        csv_path = str(gen_dir / "test.csv")
+        csv_spec = {
+            "headers": ["Department", "Budget"],
+            "rows": [["Engineering", 850000], ["Marketing", 420000]],
+        }
+        get_generator("csv").generate(csv_spec, csv_path)
+        with open(csv_path, "r", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+            self.assertEqual(rows[0], ["Department", "Budget"])
+            self.assertEqual(rows[1], ["Engineering", "850000"])
+
+        # 5. PPTX
+        pptx_path = str(gen_dir / "test.pptx")
+        pptx_spec = {
+            "title": "Keynote Presentation",
+            "slides": [{"title": "Vision", "bullets": ["Customer Obsession", "Velocity"]}],
+        }
+        get_generator("pptx").generate(pptx_spec, pptx_path)
+        prs = Presentation(pptx_path)
+        self.assertEqual(prs.slides[0].shapes.title.text, "Keynote Presentation")
+        self.assertEqual(prs.slides[1].shapes.title.text, "Vision")
+
+        # 6. PNG Chart
+        chart_path = str(gen_dir / "test_chart.png")
+        chart_spec = {
+            "chart_type": "bar",
+            "title": "Quarterly Revenue",
+            "x": ["Q1", "Q2", "Q3"],
+            "y": [12, 19, 15],
+            "x_label": "Quarter",
+            "y_label": "Millions ($)",
+        }
+        get_generator("chart").generate(chart_spec, chart_path)
+        with Image.open(chart_path) as img:
+            self.assertEqual(img.format, "PNG")
+            self.assertGreater(img.size[0], 200)
+
+        # 7. MD
+        md_path = str(gen_dir / "test.md")
+        md_spec = {
+            "title": "Architecture Overview",
+            "sections": [{"heading": "Components", "bullets": ["Frontend", "Backend"]}],
+        }
+        get_generator("md").generate(md_spec, md_path)
+        with open(md_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn("# Architecture Overview", content)
+            self.assertIn("- Frontend", content)
+
+        # 8. Code
+        code_path = str(gen_dir / "test.py")
+        code_spec = {
+            "language": "python",
+            "code": "def calculate(a, b):\n    return a * b + 1\n",
+        }
+        get_generator("code").generate(code_spec, code_path)
+        with open(code_path, "r", encoding="utf-8") as f:
+            code_text = f.read()
+            self.assertIn("return a * b + 1", code_text)
+
+    def test_generate_file_tool_and_revision_parent_tracking(self):
+        """Tool generate_file creates version 1, read_generated_spec inspects it, and based_on creates version 2 with parent."""
+        config = {"configurable": {"thread_id": str(self.thread1.id), "user_id": str(self.user1.id)}}
+
+        # Version 1 creation
+        spec_v1 = {"title": "Release Plan v1", "content": "Initial release schedule."}
+        res_v1 = generate_file.invoke(
+            {"kind": "md", "name": "release_plan.md", "spec": spec_v1},
+            config=config,
+        )
+        self.assertIn("Successfully generated md file", res_v1)
+        self.assertIn("version: 1", res_v1)
+
+        gf_v1 = GeneratedFile.objects.get(thread=self.thread1, name="release_plan.md", version=1)
+        self.assertIsNone(gf_v1.parent)
+
+        # Inspect spec using read_generated_spec
+        read_res = read_generated_spec.invoke({"file_id": gf_v1.id}, config=config)
+        self.assertIn("Release Plan v1", read_res)
+
+        # Revision creation: version 2 based on v1
+        spec_v2 = {"title": "Release Plan v2", "content": "Updated schedule with expedited release."}
+        res_v2 = generate_file.invoke(
+            {"kind": "md", "name": "release_plan.md", "spec": spec_v2, "based_on": gf_v1.id},
+            config=config,
+        )
+        self.assertIn("Successfully generated md file", res_v2)
+        self.assertIn("version: 2", res_v2)
+
+        gf_v2 = GeneratedFile.objects.get(thread=self.thread1, name="release_plan.md", version=2)
+        self.assertEqual(gf_v2.parent, gf_v1)
+        self.assertEqual(gf_v2.version, 2)
+        self.assertEqual(gf_v2.spec["title"], "Release Plan v2")
+
+    def test_generator_failure_surfaces_to_model(self):
+        """Invalid spec or missing parent surfaces clear error string to model, not silently dropped."""
+        config = {"configurable": {"thread_id": str(self.thread1.id), "user_id": str(self.user1.id)}}
+
+        # Invalid chart type
+        bad_chart_spec = {"chart_type": "3d_surface_hologram", "x": [1, 2], "y": [3, 4]}
+        res_fail = generate_file.invoke(
+            {"kind": "chart", "name": "bad.png", "spec": bad_chart_spec},
+            config=config,
+        )
+        self.assertIn("Error generating file:", res_fail)
+        self.assertIn("Unsupported chart_type", res_fail)
+
+        # Unknown kind
+        res_unknown = generate_file.invoke(
+            {"kind": "unknown_file_type", "name": "bad.xyz", "spec": {"data": 123}},
+            config=config,
+        )
+        self.assertIn("Error generating file:", res_unknown)
+        self.assertIn("Unknown generator kind", res_unknown)
+
+        # Nonexistent parent
+        res_missing_parent = generate_file.invoke(
+            {"kind": "md", "name": "rev.md", "spec": {"title": "T"}, "based_on": 999999},
+            config=config,
+        )
+        self.assertIn("Error:", res_missing_parent)
+        self.assertIn("Parent generated file id '999999' not found", res_missing_parent)
+
+    def test_manifest_lists_generated_files_with_spec_summary(self):
+        """File manifest lists generated files with ids and a short spec summary."""
+        from agent.nodes import _fetch_file_manifest
+        from asgiref.sync import async_to_sync
+
+        spec = {
+            "title": "System Architecture",
+            "sections": [{"heading": "Microservices", "content": "Documented"}],
+        }
+        gf = GeneratedFile.objects.create(
+            thread=self.thread1,
+            name="architecture.docx",
+            kind="docx",
+            version=1,
+            spec=spec,
+            path="simulated_path.docx",
+        )
+
+        manifest = async_to_sync(_fetch_file_manifest)(str(self.thread1.id))
+        gf_entry = next((item for item in manifest if item["id"] == str(gf.id)), None)
+        self.assertIsNotNone(gf_entry)
+        self.assertEqual(gf_entry["name"], "architecture.docx")
+        self.assertEqual(gf_entry["kind"], "docx")
+        self.assertIn("DOCX", gf_entry["spec_summary"])
+        self.assertIn("System Architecture", gf_entry["spec_summary"])
+
+    def test_generated_file_download_endpoint_and_security(self):
+        """Authenticated download endpoint works for generated files with security headers and cross-user 404."""
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token_user1}")
+
+        temp_gen_path = self.sample_dir / "download_test.md"
+        with open(temp_gen_path, "w", encoding="utf-8") as f:
+            f.write("# Generated Content for Download")
+
+        gf = GeneratedFile.objects.create(
+            thread=self.thread1,
+            name="my\"report\r\n.md",
+            kind="md",
+            version=1,
+            spec={"title": "Test"},
+            path=str(temp_gen_path),
+        )
+
+        res = self.client.get(f"/api/generated/{gf.id}/download/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.headers.get("X-Content-Type-Options"), "nosniff")
+        disposition = res.headers.get("Content-Disposition", "")
+        self.assertIn("attachment", disposition)
+        self.assertNotIn("\r", disposition)
+        self.assertNotIn("\n", disposition)
+
+        # Cross-user access returns 404
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token_user2}")
+        res_cross = self.client.get(f"/api/generated/{gf.id}/download/")
+        self.assertEqual(res_cross.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Generated HTML file must NEVER be rendered inline
+        html_gen_path = self.sample_dir / "gen_html.html"
+        with open(html_gen_path, "w", encoding="utf-8") as f:
+            f.write("<html><body>Generated HTML</body></html>")
+
+        gf_html = GeneratedFile.objects.create(
+            thread=self.thread1,
+            name="page.html",
+            kind="code",
+            version=1,
+            spec={"code": "<html></html>"},
+            path=str(html_gen_path),
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token_user1}")
+        res_html = self.client.get(f"/api/generated/{gf_html.id}/download/")
+        self.assertEqual(res_html.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_html.headers.get("Content-Type"), "application/octet-stream")
+
+    async def test_fake_llm_and_sse_events_during_file_generation(self):
+        """FAKE_LLM drives file generation without a key, emitting status during tool calls and a file event when done."""
+        from chat.streaming import stream_chat_turn
+
+        events = []
+        async for chunk in stream_chat_turn(thread=self.thread1, user_prompt="Please generate a project report"):
+            events.append(chunk)
+
+        full_output = "".join(events)
+        # Verify status event emitted during tool call
+        self.assertIn("event: status", full_output)
+        self.assertIn("calling tool generate_file", full_output)
+
+        # Verify file event emitted when done with id, name, kind, version, download_url
+        self.assertIn("event: file", full_output)
+        self.assertIn("/api/generated/", full_output)
+        self.assertIn("event: done", full_output)
+
+        # Verify GeneratedFile row created in DB
+        gf = await GeneratedFile.objects.filter(thread=self.thread1, name="report.md").afirst()
+        self.assertIsNotNone(gf)
+        self.assertEqual(gf.version, 1)

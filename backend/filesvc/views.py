@@ -128,3 +128,35 @@ class FileDownloadView(APIView):
         response["X-Content-Type-Options"] = "nosniff"
         response["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
         return response
+
+class GeneratedFileDownloadView(APIView):
+    """Authenticated endpoint to download generated files with security headers."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, file_id):
+        """Download generated file verifying ownership, setting nosniff, and preventing inline execution."""
+        from chat.models import GeneratedFile
+        from filesvc.validators import detect_mime
+
+        gf = GeneratedFile.objects.filter(id=file_id).select_related("thread").first()
+        if not gf or gf.thread.user_id != request.user.id:
+            return Response({"detail": "Generated file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not gf.path or not os.path.exists(gf.path):
+            return Response({"detail": "File data not found on disk."}, status=status.HTTP_404_NOT_FOUND)
+
+        safe_name = sanitize_filename(gf.name)
+        with open(gf.path, "rb") as f:
+            header = f.read(4096)
+        mime = detect_mime(header)
+
+        if is_dangerous_inline_file(mime, gf.name):
+            content_type = "application/octet-stream"
+        else:
+            content_type = mime or "application/octet-stream"
+
+        file_handle = open(gf.path, "rb")
+        response = FileResponse(file_handle, content_type=content_type, as_attachment=True, filename=safe_name)
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
+        return response

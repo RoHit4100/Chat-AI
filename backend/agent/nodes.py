@@ -36,12 +36,14 @@ def _fetch_file_manifest(thread_id: str) -> list[dict]:
         })
 
     # Query generated files for the thread
+    from filesvc.generators.registry import summarize_spec
     for gf in GeneratedFile.objects.filter(thread_id=thread_uuid):
         manifest.append({
             "id": str(gf.id),
             "name": gf.name,
             "kind": gf.kind,
             "version": gf.version,
+            "spec_summary": summarize_spec(gf.kind, gf.spec),
             "status": "generated",
         })
 

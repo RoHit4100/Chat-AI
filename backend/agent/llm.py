@@ -54,6 +54,17 @@ class DeterministicFakeChatModel(BaseChatModel):
         content = str(getattr(last_msg, "content", "")).lower()
         if "fail tool" in content or "error tool" in content:
             return "", [{"name": "failing_tool", "args": {"query": "fail"}, "id": "call_err_0", "type": "tool_call"}]
+        if "generate" in content or "create file" in content:
+            return "", [{
+                "name": "generate_file",
+                "args": {
+                    "kind": "md",
+                    "name": "report.md",
+                    "spec": {"title": "Generated Report", "content": "Automatic markdown generation by DeterministicFakeChatModel."},
+                },
+                "id": "call_gen_0",
+                "type": "tool_call",
+            }]
         if "call tool" in content or "test tool" in content:
             return "", [{"name": "search_web", "args": {"query": "test query"}, "id": "call_web_0", "type": "tool_call"}]
 

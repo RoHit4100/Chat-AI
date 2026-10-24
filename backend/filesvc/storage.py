@@ -11,8 +11,10 @@ class LocalStorage:
         self.base_dir = Path(base_dir or settings.MEDIA_ROOT).resolve()
         self.raw_dir = self.base_dir / "uploads"
         self.parsed_dir = self.base_dir / "parsed"
+        self.generated_dir = self.base_dir / "generated"
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.parsed_dir.mkdir(parents=True, exist_ok=True)
+        self.generated_dir.mkdir(parents=True, exist_ok=True)
 
     def save_raw(self, file_obj, extension: str = "") -> tuple[str, int]:
         """Save raw uploaded stream to disk with a random UUID filename. Returns (filepath, size)."""
@@ -50,6 +52,13 @@ class LocalStorage:
         destination = self.parsed_dir / filename
         with open(destination, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        return str(destination.resolve())
+
+    def get_generated_path(self, filename: str) -> str:
+        """Create a randomized safe path within generated_dir."""
+        random_prefix = uuid.uuid4().hex
+        ext = Path(filename).suffix.lower()
+        destination = self.generated_dir / f"{random_prefix}{ext}"
         return str(destination.resolve())
 
     def read_parsed(self, parsed_path: str) -> dict:

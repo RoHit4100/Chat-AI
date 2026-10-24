@@ -1,10 +1,11 @@
 import asyncio
 import json
 import logging
+import re
 from typing import AsyncIterator
 from langchain_core.messages import HumanMessage, RemoveMessage
 from agent.graph import get_compiled_graph
-from chat.models import Thread, Message
+from chat.models import Thread, Message, GeneratedFile
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,12 @@ async def stream_chat_turn(
                     collected_content += text
                     yield format_sse("token", {"content": text})
 
+                # Emit status event when model invokes a tool
+                tool_calls = getattr(chunk_msg, "tool_calls", None)
+                if tool_calls:
+                    for tc in tool_calls:
+                        yield format_sse("status", {"node": "tools", "status": f"calling tool {tc.get('name')}..."})
+
                 # Extract token usage metadata from chunk if provided by LLM
                 usage = getattr(chunk_msg, "usage_metadata", None)
                 if usage:
@@ -101,6 +108,24 @@ async def stream_chat_turn(
                     if node_name == "prepare" and isinstance(updates, dict) and "manifest" in updates:
                         for item in updates.get("manifest", []):
                             yield format_sse("file", item)
+
+                    # Emit file event when file generation tool completes
+                    if node_name == "tools" and isinstance(updates, dict):
+                        for m in updates.get("messages", []):
+                            content = str(getattr(m, "content", ""))
+                            if "Successfully generated" in content:
+                                match = re.search(r"\(id:\s*(\d+),\s*version:\s*(\d+)\)", content)
+                                if match:
+                                    file_id = int(match.group(1))
+                                    gf = await GeneratedFile.objects.filter(id=file_id).afirst()
+                                    if gf:
+                                        yield format_sse("file", {
+                                            "id": gf.id,
+                                            "name": gf.name,
+                                            "kind": gf.kind,
+                                            "version": gf.version,
+                                            "download_url": f"/api/generated/{gf.id}/download/",
+                                        })
 
         status = "complete"
         yield format_sse("done", {"status": "complete"})

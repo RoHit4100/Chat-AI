@@ -131,9 +131,126 @@ def read_file(
     return output
 
 @tool
+def generate_file(
+    kind: str,
+    name: str,
+    spec: dict,
+    based_on: str | int | None = None,
+    config: RunnableConfig = None,
+) -> str:
+    """Generate a file (docx, pdf, xlsx, csv, pptx, png chart, md, code) from a structured spec.
+    To revise an existing file, provide its id in based_on.
+    """
+    try:
+        import json
+        from filesvc.generators.registry import get_generator, get_default_extension
+        from filesvc.validators import sanitize_filename
+        from chat.models import Thread, GeneratedFile
+
+        # Support spec passed as JSON string from model
+        if isinstance(spec, str):
+            try:
+                spec = json.loads(spec)
+            except Exception as e:
+                return f"Error generating file: spec must be valid JSON ({str(e)})."
+
+        if not isinstance(spec, dict):
+            return "Error generating file: spec must be a dictionary object."
+
+        cfg_configurable = (config or {}).get("configurable", {})
+        cfg_thread_id = cfg_configurable.get("thread_id")
+        cfg_user_id = cfg_configurable.get("user_id")
+
+        if not cfg_thread_id:
+            thread = Thread.objects.first()
+        else:
+            thread = Thread.objects.filter(id=cfg_thread_id).first()
+
+        if not thread:
+            return "Error generating file: Conversation thread not found."
+
+        if cfg_user_id and str(thread.user_id) != str(cfg_user_id):
+            return "Error: Access denied. Thread does not belong to user."
+
+        clean_name = sanitize_filename(name)
+        try:
+            gen = get_generator(kind)
+        except ValueError as exc:
+            return f"Error generating file: {str(exc)}"
+
+        ext = get_default_extension(kind, clean_name)
+        if not clean_name.lower().endswith(ext):
+            clean_name = f"{clean_name}{ext}"
+
+        version = 1
+        parent = None
+
+        if based_on:
+            parent = GeneratedFile.objects.filter(id=based_on, thread=thread).first()
+            if not parent:
+                return f"Error: Parent generated file id '{based_on}' not found in this thread."
+            version = parent.version + 1
+        else:
+            existing = GeneratedFile.objects.filter(thread=thread, name=clean_name).order_by("-version").first()
+            if existing:
+                version = existing.version + 1
+                parent = existing
+
+        output_path = storage.get_generated_path(clean_name)
+        try:
+            gen.generate(spec, output_path)
+        except Exception as exc:
+            return f"Error generating file: {str(exc)}"
+
+        gf = GeneratedFile.objects.create(
+            thread=thread,
+            name=clean_name,
+            kind=kind,
+            version=version,
+            parent=parent,
+            spec=spec,
+            path=output_path,
+        )
+
+        return (
+            f"Successfully generated {kind} file '{clean_name}' "
+            f"(id: {gf.id}, version: {version}). "
+            f"Download URL: /api/generated/{gf.id}/download/"
+        )
+    except Exception as exc:
+        return f"Error generating file: {str(exc)}"
+
+@tool
+def read_generated_spec(
+    file_id: str | int,
+    config: RunnableConfig = None,
+) -> str:
+    """Read the JSON specification of a previously generated file to prepare an edit or revision."""
+    try:
+        import json
+        from chat.models import GeneratedFile
+
+        cfg_configurable = (config or {}).get("configurable", {})
+        cfg_thread_id = cfg_configurable.get("thread_id")
+        cfg_user_id = cfg_configurable.get("user_id")
+
+        gf = GeneratedFile.objects.filter(id=file_id).select_related("thread").first()
+        if not gf:
+            return f"Error: Generated file with id '{file_id}' not found."
+
+        if cfg_thread_id and str(gf.thread_id) != str(cfg_thread_id):
+            return "Error: File does not belong to the current thread."
+        if cfg_user_id and str(gf.thread.user_id) != str(cfg_user_id):
+            return "Error: Access denied. File does not belong to the current user."
+
+        return json.dumps(gf.spec, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        return f"Error reading spec: {str(exc)}"
+
+@tool
 def failing_tool(query: str = "fail") -> str:
     """A tool designed to raise an error to verify error handling and loop termination."""
     raise ValueError(f"Simulated tool error executing query: {query}")
 
 # Registered tools for agent node
-ALL_TOOLS = [search_web, inspect_file, read_file, failing_tool]
+ALL_TOOLS = [search_web, inspect_file, read_file, generate_file, read_generated_spec, failing_tool]
