@@ -4,6 +4,9 @@ djangorestframework==3.15.2
 django-cors-headers==4.7.0
 
 # Database
+psycopg==3.3.6
+psycopg-binary==3.3.6
+psycopg-pool==3.3.3
 psycopg2-binary==2.9.10
 
 # ASGI Server
@@ -17,15 +20,25 @@ cryptography==44.0.1
 # Environment
 python-dotenv==1.0.1
 
-# LangGraph & Core ecosystem
-langgraph==0.3.6
-langgraph-checkpoint==2.1.2
-langgraph-prebuilt==0.1.8
-langgraph-sdk==0.1.74
-langchain-core==0.3.86
+# LangGraph & Checkpoint Postgres
+langgraph==1.2.17
+langgraph-checkpoint==4.3.0
+langgraph-checkpoint-postgres==3.2.0
+langgraph-prebuilt==1.1.1
+langgraph-sdk==0.4.9
+langchain==1.4.7
+langchain-core==1.7.0
+langchain-openai==1.7.2
+langchain-protocol==0.0.20
 langsmith==0.14.12
 pydantic==2.14.1
 pydantic_core==2.50.1
+
+# LLM Providers & Helpers
+openai==3.37.0
+tiktoken==0.14.0
+jiter==0.18.0
+regex==2026.9.29
 
 # Utilities
 requests==2.34.2
@@ -34,3 +47,7 @@ sqlparse==0.6.0
 cffi==2.1.1
 pycparser==3.12
 tzdata==2026.5
+ormsgpack==1.13.0
+orjson==3.13.0
+xxhash==4.0.2
+zstandard==0.25.0
