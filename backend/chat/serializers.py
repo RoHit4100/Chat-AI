@@ -35,6 +35,8 @@ class MessageSerializer(serializers.ModelSerializer):
 
 class UploadedFileSerializer(serializers.ModelSerializer):
     """Serializer for uploaded files."""
+    download_url = serializers.SerializerMethodField()
+
     class Meta:
         model = UploadedFile
         fields = [
@@ -49,12 +51,18 @@ class UploadedFileSerializer(serializers.ModelSerializer):
             "summary",
             "status",
             "error",
+            "download_url",
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
 
+    def get_download_url(self, obj):
+        return f"/api/files/{obj.id}/download/"
+
 class GeneratedFileSerializer(serializers.ModelSerializer):
     """Serializer for agent-generated files."""
+    download_url = serializers.SerializerMethodField()
+
     class Meta:
         model = GeneratedFile
         fields = [
@@ -66,6 +74,10 @@ class GeneratedFileSerializer(serializers.ModelSerializer):
             "parent",
             "spec",
             "path",
+            "download_url",
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def get_download_url(self, obj):
+        return f"/api/generated/{obj.id}/download/"

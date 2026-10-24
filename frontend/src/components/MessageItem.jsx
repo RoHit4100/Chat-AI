@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, User, RotateCcw, AlertTriangle } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { FileChip } from "./FileChip";
+import { FileCard } from "./FileCard";
 
 export function MessageItem({
   message,
@@ -17,6 +19,9 @@ export function MessageItem({
   const isStopped = message.status === "stopped";
   const isCurrentlyStreaming = isLast && isStreaming && message.role === "assistant";
 
+  const userFiles = message.files || [];
+  const generatedFiles = message.generatedFiles || [];
+
   return (
     <div className={`message-row ${message.role}`}>
       {!isUser && (
@@ -27,7 +32,16 @@ export function MessageItem({
 
       <div className="message-bubble">
         {isUser ? (
-          <div>{message.content}</div>
+          <div>
+            {userFiles.length > 0 && (
+              <div className="message-user-files">
+                {userFiles.map((f, idx) => (
+                  <FileChip key={f.id || idx} file={f} readOnly />
+                ))}
+              </div>
+            )}
+            {message.content && <div>{message.content}</div>}
+          </div>
         ) : (
           <div className="markdown-body">
             <ReactMarkdown
@@ -50,6 +64,14 @@ export function MessageItem({
             >
               {message.content}
             </ReactMarkdown>
+
+            {generatedFiles.length > 0 && (
+              <div className="message-generated-files">
+                {generatedFiles.map((gf) => (
+                  <FileCard key={gf.id || gf.name} file={gf} />
+                ))}
+              </div>
+            )}
 
             {isCurrentlyStreaming && <span className="streaming-cursor" />}
 

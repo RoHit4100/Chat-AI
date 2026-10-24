@@ -85,7 +85,39 @@ export function useChatStream(threadId, onTitleGenerated) {
               setStatusText(formatStatus(parsedData.node));
             }
           } else if (eventName === "file") {
-            setActiveFiles((prev) => [...prev, parsedData]);
+            setActiveFiles((prev) => {
+              const existingIdx = prev.findIndex(
+                (f) => f.name?.toLowerCase() === parsedData.name?.toLowerCase()
+              );
+              if (existingIdx >= 0) {
+                const copy = [...prev];
+                copy[existingIdx] = parsedData;
+                return copy;
+              }
+              return [...prev, parsedData];
+            });
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
+                const currentGf = [...(updated[lastIdx].generatedFiles || [])];
+                const existingIdx = currentGf.findIndex(
+                  (f) => f.name?.toLowerCase() === parsedData.name?.toLowerCase()
+                );
+                if (existingIdx >= 0) {
+                  // Replaced in place when revised so the card updates immediately
+                  currentGf[existingIdx] = parsedData;
+                } else {
+                  currentGf.push(parsedData);
+                }
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  generatedFiles: currentGf,
+                };
+              }
+              return updated;
+            });
           } else if (eventName === "done") {
             receivedDone = true;
             setStatusText("");
@@ -167,18 +199,30 @@ export function useChatStream(threadId, onTitleGenerated) {
   };
 
   const send = useCallback(
-    async (userText) => {
-      if (!userText.trim() || !threadId || isStreaming) return;
+    async (userText, attachedFiles = []) => {
+      const finalPrompt = userText.trim() || (attachedFiles.length > 0 ? "Please analyze the attached files." : "");
+      if (!finalPrompt || !threadId || isStreaming) return;
 
       setError(null);
       setIsStreaming(true);
       setStatusText("Connecting to stream...");
 
-      // Append user message and new assistant message placeholder
+      // Append user message with attached files and new assistant message placeholder
       setMessages((prev) => [
         ...prev,
-        { id: "usr-" + Date.now(), role: "user", content: userText },
-        { id: "ast-" + Date.now(), role: "assistant", content: "", status: "streaming" },
+        {
+          id: "usr-" + Date.now(),
+          role: "user",
+          content: userText.trim(),
+          files: attachedFiles,
+        },
+        {
+          id: "ast-" + Date.now(),
+          role: "assistant",
+          content: "",
+          generatedFiles: [],
+          status: "streaming",
+        },
       ]);
 
       const controller = new AbortController();
@@ -192,7 +236,10 @@ export function useChatStream(threadId, onTitleGenerated) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ message: userText }),
+          body: JSON.stringify({
+            message: finalPrompt,
+            files: attachedFiles.map((f) => f.id).filter(Boolean),
+          }),
           signal: controller.signal,
         });
 

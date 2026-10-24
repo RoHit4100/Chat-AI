@@ -16,7 +16,8 @@ class CheckpointerManager:
 
     async def start(self):
         """Create pool, connect, and run setup() for checkpoint tables."""
-        use_sqlite = os.getenv("USE_SQLITE", "0").lower() in ("1", "true")
+        import sys
+        use_sqlite = os.getenv("USE_SQLITE", "0").lower() in ("1", "true") or "test" in sys.argv
         db_url = os.getenv("DATABASE_URL", "")
 
         if use_sqlite or not db_url.startswith("postgres"):

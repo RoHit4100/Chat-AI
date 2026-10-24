@@ -32,9 +32,6 @@ class ThreadFilesView(APIView):
         if not thread:
             return Response({"detail": "Thread not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        files = thread.uploaded_files.all()
-        return Response(UploadedFileSerializer(files, many=True).data)
-
     def post(self, request, thread_id):
         """Upload one or many files to a thread, validating limits and running threadpool parsers."""
         thread = Thread.objects.filter(id=thread_id, user=request.user).first()
@@ -101,6 +98,20 @@ class ThreadFilesView(APIView):
             uploaded_records.append(uf)
 
         return Response(UploadedFileSerializer(uploaded_records, many=True).data, status=status.HTTP_201_CREATED)
+
+class ThreadGeneratedFilesView(APIView):
+    """List all generated files belonging to a specific thread."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, thread_id):
+        from chat.models import GeneratedFile
+        from chat.serializers import GeneratedFileSerializer
+        thread = Thread.objects.filter(id=thread_id, user=request.user).first()
+        if not thread:
+            return Response({"detail": "Thread not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        files = thread.generated_files.all()
+        return Response(GeneratedFileSerializer(files, many=True).data)
 
 class FileDownloadView(APIView):
     """Authenticated endpoint to download uploaded files with security headers."""

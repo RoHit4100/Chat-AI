@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -66,7 +67,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
 # Database configuration: support PostgreSQL via DATABASE_URL with SQLite fallback
-use_sqlite = os.getenv("USE_SQLITE", "0").lower() in ("1", "true")
+use_sqlite = os.getenv("USE_SQLITE", "0").lower() in ("1", "true") or "test" in sys.argv
 db_url = os.getenv("DATABASE_URL")
 if db_url and not use_sqlite:
     parsed = urlparse(db_url)

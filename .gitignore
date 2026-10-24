@@ -29,6 +29,9 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 media/
+backend/sample_files/generated_test_output/
+backend/sample_files/download_test.md
+backend/sample_files/gen_html.html
 
 # Environment variables & secrets (CRITICAL: never commit secrets)
 .env

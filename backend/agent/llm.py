@@ -148,8 +148,9 @@ class DeterministicFakeChatModel(BaseChatModel):
                 yield ChatGenerationChunk(message=AIMessageChunk(content=token))
 
 def get_llm():
-    """Initialize and return the configured chat model, using DeterministicFakeChatModel when FAKE_LLM=1."""
-    if os.getenv("FAKE_LLM", "0").lower() in ("1", "true"):
+    """Initialize and return the configured chat model, using DeterministicFakeChatModel when FAKE_LLM=1 or during tests."""
+    import sys
+    if os.getenv("FAKE_LLM", "0").lower() in ("1", "true") or "test" in sys.argv:
         return DeterministicFakeChatModel()
 
     provider = os.getenv("LLM_PROVIDER", "openai").lower()

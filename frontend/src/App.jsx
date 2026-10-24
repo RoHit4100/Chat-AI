@@ -53,20 +53,49 @@ export default function App() {
     return [];
   }, []);
 
-  // Fetch messages for a specific thread
+  // Fetch messages and generated files for a specific thread
   const loadThreadMessages = useCallback(async (threadId) => {
     if (!threadId) return;
     try {
       const token = await getToken();
-      const res = await fetch(`/api/threads/${threadId}/messages/`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
+      const [msgRes, genRes] = await Promise.all([
+        fetch(`/api/threads/${threadId}/messages/`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/threads/${threadId}/generated/`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+
+      let msgs = msgRes.ok ? await msgRes.json() : [];
+      const genFiles = genRes.ok ? await genRes.json() : [];
+
+      if (msgs.length > 0 && genFiles.length > 0) {
+        // Map to latest version per file name so revised files update to latest version
+        const latestGenMap = new Map();
+        genFiles.forEach((gf) => {
+          const key = (gf.name || "").toLowerCase();
+          if (!latestGenMap.has(key) || (latestGenMap.get(key).version || 0) < (gf.version || 0)) {
+            latestGenMap.set(key, gf);
+          }
+        });
+        const distinctGenFiles = Array.from(latestGenMap.values());
+
+        // Attach distinct latest generated files to the last assistant message
+        let lastAssistantIdx = -1;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "assistant") {
+            lastAssistantIdx = i;
+            break;
+          }
+        }
+
+        if (lastAssistantIdx >= 0) {
+          msgs = msgs.map((m, idx) =>
+            idx === lastAssistantIdx
+              ? { ...m, generatedFiles: distinctGenFiles }
+              : m
+          );
+        }
       }
+
+      setMessages(msgs);
     } catch (err) {
       console.warn("Failed to load thread messages:", err);
     }

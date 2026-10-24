@@ -1,7 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Send,
-  Square,
   Menu,
   ChevronDown,
   Sparkles,
@@ -9,6 +7,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { MessageItem } from "./MessageItem";
+import { Composer } from "./Composer";
 
 export function ChatView({
   thread,
@@ -22,13 +21,11 @@ export function ChatView({
   onRetry,
   onToggleSidebar,
 }) {
-  const [inputText, setInputText] = useState("");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   const messagesContainerRef = useRef(null);
   const messagesEndRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
-  const textareaRef = useRef(null);
 
   // Auto-scroll handler detecting user manual scroll
   const handleScroll = () => {
@@ -54,30 +51,8 @@ export function ChatView({
     setShowScrollBottom(false);
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  const handleSubmit = () => {
-    if (!inputText.trim() || isStreaming) return;
-    onSend(inputText.trim());
-    setInputText("");
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
-  };
-
   const handleStarterClick = (prompt) => {
     onSend(prompt);
-  };
-
-  const handleTextareaInput = (e) => {
-    setInputText(e.target.value);
-    e.target.style.height = "auto";
-    e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
   };
 
   return (
@@ -196,43 +171,13 @@ export function ChatView({
 
       {/* Input Composer */}
       <div className="input-area">
-        <div className="input-box-wrapper">
-          <textarea
-            ref={textareaRef}
-            className="chat-textarea"
-            placeholder="Send a message (Enter to send, Shift+Enter for new line)..."
-            rows={1}
-            value={inputText}
-            onChange={handleTextareaInput}
-            onKeyDown={handleKeyDown}
-          />
-          <div className="input-bottom-row">
-            <span className="input-hint">
-              {isStreaming ? (
-                <span style={{ color: "var(--accent-primary)" }}>Streaming response...</span>
-              ) : (
-                "Markdown & code blocks supported"
-              )}
-            </span>
-            <div className="input-actions">
-              {isStreaming ? (
-                <button className="stop-btn" onClick={onStop} title="Stop response generation">
-                  <Square size={13} fill="currentColor" />
-                  <span>Stop</span>
-                </button>
-              ) : (
-                <button
-                  className="send-btn"
-                  onClick={handleSubmit}
-                  disabled={!inputText.trim()}
-                  title="Send message"
-                >
-                  <Send size={15} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <Composer
+          threadId={thread?.id}
+          isStreaming={isStreaming}
+          onSend={onSend}
+          onStop={onStop}
+          statusText={statusText}
+        />
       </div>
     </main>
   );
