@@ -87,10 +87,17 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None) ->
 
     return {"messages": [response]}
 
+from agent.memory import sanitize_tool_output, summarize_node
+
 async def tools_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    """Execute tool calls, count consecutive tool failures, and handle errors."""
+    """Execute tool calls, sanitize tool outputs to prevent large blobs from entering state, and count failures."""
     result = await _raw_tool_node.ainvoke(state, config=config)
     new_messages = result.get("messages", [])
+
+    # Sanitize tool messages: strip base64 images and truncate long output
+    for m in new_messages:
+        if hasattr(m, "content") and isinstance(m.content, str):
+            m.content = sanitize_tool_output(m.content)
 
     # Check if any executed tool failed
     has_error = any(
@@ -102,23 +109,6 @@ async def tools_node(state: AgentState, config: RunnableConfig | None = None) ->
     updated_errors = (current_errors + 1) if has_error else 0
 
     return {"messages": new_messages, "tool_errors": updated_errors}
-
-async def summarize_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    """Generate or update the rolling summary of the conversation."""
-    existing_summary = state.get("summary", "")
-    messages = state.get("messages", [])
-
-    if not messages:
-        return {"summary": existing_summary}
-
-    # Build concise rolling summary from conversation
-    recent_texts = [f"{getattr(m, 'type', 'msg')}: {getattr(m, 'content', '')[:100]}" for m in messages[-4:]]
-    updated_summary = f"{existing_summary} | Recent: " + "; ".join(recent_texts) if existing_summary else "Recent: " + "; ".join(recent_texts)
-    # Cap summary length
-    if len(updated_summary) > 2000:
-        updated_summary = updated_summary[-2000:]
-
-    return {"summary": updated_summary}
 
 def should_continue(state: AgentState) -> str:
     """Route agent output to tools or summarize; stop looping if 3 consecutive failures reached."""

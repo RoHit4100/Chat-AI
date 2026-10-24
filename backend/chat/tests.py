@@ -300,6 +300,9 @@ class AgentAndStreamingTests(TestCase):
         from agent.graph import get_compiled_graph
         from langchain_core.messages import HumanMessage
 
+        os.environ["MAX_TOKENS"] = "5"
+        os.environ["KEEP_LAST"] = "1"
+
         graph = await get_compiled_graph()
         thread_id = "00000000-0000-0000-0000-000000000002"
         res = await graph.ainvoke(
@@ -309,7 +312,6 @@ class AgentAndStreamingTests(TestCase):
 
         self.assertIsNotNone(res.get("summary"))
         self.assertTrue(len(res["summary"]) > 0)
-        self.assertTrue("Recent:" in res["summary"])
         self.assertFalse(getattr(res["messages"][-1], "tool_calls", None))
 
     async def test_three_tool_errors_stop_loop(self):
@@ -407,4 +409,168 @@ class AgentAndStreamingTests(TestCase):
         # Message count shouldn't increase because the assistant turn was replaced
         msg_count_after = await Message.objects.filter(thread=thread).acount()
         self.assertEqual(msg_count_before, msg_count_after)
+
+
+class MemoryAndSummarizationTests(TestCase):
+    """Tests for agent/memory.py summarization triggers, message preservation, and merging."""
+
+    def setUp(self):
+        self.old_fake_llm = os.environ.get("FAKE_LLM")
+        self.old_max_tokens = os.environ.get("MAX_TOKENS")
+        self.old_keep_last = os.environ.get("KEEP_LAST")
+        os.environ["FAKE_LLM"] = "1"
+
+    def tearDown(self):
+        if self.old_fake_llm is not None:
+            os.environ["FAKE_LLM"] = self.old_fake_llm
+        else:
+            os.environ.pop("FAKE_LLM", None)
+
+        if self.old_max_tokens is not None:
+            os.environ["MAX_TOKENS"] = self.old_max_tokens
+        else:
+            os.environ.pop("MAX_TOKENS", None)
+
+        if self.old_keep_last is not None:
+            os.environ["KEEP_LAST"] = self.old_keep_last
+        else:
+            os.environ.pop("KEEP_LAST", None)
+
+    async def test_summarization_triggers_above_threshold(self):
+        """When message tokens exceed MAX_TOKENS, older messages are summarized and pruned."""
+        from agent.memory import summarize_node
+        from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage
+
+        os.environ["MAX_TOKENS"] = "40"
+        os.environ["KEEP_LAST"] = "3"
+
+        # Create 8 messages (~80+ tokens)
+        messages = []
+        for i in range(8):
+            cls = HumanMessage if i % 2 == 0 else AIMessage
+            messages.append(cls(content=f"Detailed message number {i} with several words and tokens", id=f"msg_{i}"))
+
+        state = {
+            "messages": messages,
+            "summary": "Existing preamble.",
+            "manifest": [],
+            "tool_errors": 0,
+        }
+
+        result = await summarize_node(state)
+
+        # Summarization must trigger
+        self.assertIn("summary", result)
+        self.assertTrue(len(result["summary"]) > 0)
+        self.assertIn("messages", result)
+
+        # Exactly 5 older messages (8 - 3 = 5) must have RemoveMessage operations
+        removed_ids = [m.id for m in result["messages"] if isinstance(m, RemoveMessage)]
+        self.assertEqual(len(removed_ids), 5)
+        self.assertEqual(removed_ids, ["msg_0", "msg_1", "msg_2", "msg_3", "msg_4"])
+
+    async def test_last_keep_last_messages_preserved(self):
+        """The last KEEP_LAST messages are preserved verbatim in graph state after compaction."""
+        from langgraph.graph import StateGraph, START, END
+        from agent.state import AgentState
+        from agent.memory import summarize_node
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        os.environ["MAX_TOKENS"] = "30"
+        os.environ["KEEP_LAST"] = "4"
+
+        builder = StateGraph(AgentState)
+        builder.add_node("summarize", summarize_node)
+        builder.add_edge(START, "summarize")
+        builder.add_edge("summarize", END)
+        graph = builder.compile()
+
+        # Provide 10 messages with distinct IDs
+        initial_messages = []
+        for i in range(10):
+            cls = HumanMessage if i % 2 == 0 else AIMessage
+            initial_messages.append(cls(content=f"Message step {i} containing relevant content.", id=f"m_{i}"))
+
+        final_state = await graph.ainvoke({
+            "messages": initial_messages,
+            "summary": "",
+            "manifest": [],
+            "tool_errors": 0,
+        })
+
+        # Exactly KEEP_LAST (4) messages should remain in state
+        remaining_messages = final_state["messages"]
+        self.assertEqual(len(remaining_messages), 4)
+
+        remaining_ids = [m.id for m in remaining_messages]
+        self.assertEqual(remaining_ids, ["m_6", "m_7", "m_8", "m_9"])
+        self.assertTrue(len(final_state["summary"]) > 0)
+
+    async def test_summary_merges_across_multiple_compactions(self):
+        """Summary merges incrementally across successive compactions."""
+        from agent.memory import summarize_node
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        os.environ["MAX_TOKENS"] = "20"
+        os.environ["KEEP_LAST"] = "2"
+
+        # Compaction 1: First batch
+        batch_1 = [
+            HumanMessage(content="Alpha discovery was successful.", id="c1_1"),
+            AIMessage(content="Acknowledged alpha discovery.", id="c1_2"),
+            HumanMessage(content="Beta testing launched.", id="c1_3"),
+            AIMessage(content="Beta testing in progress.", id="c1_4"),
+        ]
+
+        state_1 = {
+            "messages": batch_1,
+            "summary": "Initial baseline summary.",
+            "manifest": [],
+            "tool_errors": 0,
+        }
+
+        res_1 = await summarize_node(state_1)
+        summary_1 = res_1["summary"]
+
+        self.assertIn("Initial baseline summary", summary_1)
+        self.assertIn("Alpha discovery", summary_1)
+
+        # Compaction 2: Preserved messages from batch 1 (c1_3, c1_4) plus new batch
+        batch_2 = [
+            batch_1[2],
+            batch_1[3],
+            HumanMessage(content="Gamma deployment initiated.", id="c2_1"),
+            AIMessage(content="Gamma deployment completed.", id="c2_2"),
+        ]
+
+        state_2 = {
+            "messages": batch_2,
+            "summary": summary_1,
+            "manifest": [],
+            "tool_errors": 0,
+        }
+
+        res_2 = await summarize_node(state_2)
+        summary_2 = res_2["summary"]
+
+        # Final summary must retain initial summary and incorporate new older messages
+        self.assertIn("Initial baseline summary", summary_2)
+        self.assertIn("Beta testing", summary_2)
+
+    def test_sanitize_tool_output(self):
+        """Sanitizer strips base64 data and truncates oversized tool outputs."""
+        from agent.memory import sanitize_tool_output
+
+        # Base64 image data URI
+        input_with_image = "Here is an image: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA and text after."
+        cleaned = sanitize_tool_output(input_with_image)
+        self.assertNotIn("data:image/png;base64", cleaned)
+        self.assertIn("[base64 image omitted]", cleaned)
+
+        # Large tool output
+        huge_text = "tool output content line " * 200
+        truncated = sanitize_tool_output(huge_text, max_chars=1000)
+        self.assertTrue(len(truncated) <= 1050)
+        self.assertIn("... [tool output truncated]", truncated)
+
 

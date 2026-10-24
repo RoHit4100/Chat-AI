@@ -4,9 +4,9 @@ from agent.nodes import (
     prepare_node,
     agent_node,
     tools_node,
-    summarize_node,
     should_continue,
 )
+from agent.memory import summarize_node
 from agent.checkpointer import get_checkpointer
 
 def build_chat_graph(checkpointer=None):

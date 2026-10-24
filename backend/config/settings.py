@@ -14,8 +14,10 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = os.getenv("SECRET_KEY", "insecure-dev-secret-key-change-in-production")
 DEBUG = os.getenv("DEBUG", "1").lower() in ("1", "true", "yes")
 
-allowed_hosts_str = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,backend")
+allowed_hosts_str = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,backend,testserver")
 ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_str.split(",") if host.strip()]
+if "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
 
 # Application definition
 INSTALLED_APPS = [
