@@ -47,11 +47,11 @@ class BugFixesRegressionTests(TestCase):
         contain only the final assistant text.
         """
         async def mock_astream(*args, **kwargs):
-            # 1. Valid agent token chunk
-            yield ("messages", (AIMessageChunk(content="Hello "), {"langgraph_node": "agent"}))
+            # 1. Valid agent token chunk with structured content block
+            yield ("messages", (AIMessageChunk(content=[{"type": "text", "text": "Hello "}]), {"langgraph_node": "agent"}))
             # 2. ToolMessage chunk (must NOT emit token)
             yield ("messages", (ToolMessage(content="SECRET_TOOL_OUTPUT", tool_call_id="call_1"), {"langgraph_node": "tools"}))
-            # 3. Another valid agent token chunk
+            # 3. Another valid agent token chunk with string content
             yield ("messages", (AIMessageChunk(content="world!"), {"langgraph_node": "agent"}))
             # 4. Tool update event (must emit status only, not token)
             yield ("updates", {"tools": {"messages": [ToolMessage(content="Tool result data", tool_call_id="call_1")]}})

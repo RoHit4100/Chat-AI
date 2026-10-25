@@ -2,8 +2,8 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator
-from langchain_core.messages import HumanMessage, RemoveMessage, AIMessageChunk
+from typing import AsyncIterator, Any
+from langchain_core.messages import HumanMessage, RemoveMessage, AIMessage, AIMessageChunk
 from agent.graph import get_compiled_graph
 from chat.models import Thread, Message, GeneratedFile
 
@@ -33,6 +33,25 @@ def format_sse(event: str, data: dict) -> str:
 def estimate_tokens(text: str) -> int:
     """Estimate token count as a fallback heuristic (1 token per 4 characters)."""
     return max(1, len(text) // 4) if text else 0
+
+def extract_text_from_chunk_content(content: Any) -> str:
+    """Extract plain text string from AIMessageChunk content (which can be str or list of dicts/blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        pieces = []
+        for item in content:
+            if isinstance(item, str):
+                pieces.append(item)
+            elif isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    pieces.append(str(item["text"]))
+                elif "text" in item:
+                    pieces.append(str(item["text"]))
+            elif hasattr(item, "text"):
+                pieces.append(str(getattr(item, "text", "")))
+        return "".join(pieces)
+    return ""
 
 async def stream_chat_turn(
     thread: Thread,
@@ -89,8 +108,9 @@ async def stream_chat_turn(
                 # Strictly emit token events ONLY for AIMessageChunk from the "agent" node
                 # Never stream ToolMessage content or output from summarize node
                 if node_name == "agent" and isinstance(chunk_msg, AIMessageChunk):
-                    text = getattr(chunk_msg, "content", "")
-                    if isinstance(text, str) and text:
+                    raw_content = getattr(chunk_msg, "content", "")
+                    text = extract_text_from_chunk_content(raw_content)
+                    if text:
                         collected_content += text
                         yield format_sse("token", {"content": text})
 
@@ -144,6 +164,20 @@ async def stream_chat_turn(
         logger.exception("Streaming execution encountered an error: %s", exc)
         yield format_sse("error", {"error": str(exc)})
     finally:
+        # Fallback: if collected_content is empty, retrieve final text from graph state
+        if not collected_content:
+            try:
+                state_snapshot = await graph.aget_state(config)
+                if state_snapshot and state_snapshot.values.get("messages"):
+                    for m in reversed(state_snapshot.values["messages"]):
+                        if isinstance(m, AIMessage):
+                            fb_text = extract_text_from_chunk_content(m.content)
+                            if fb_text:
+                                collected_content = fb_text
+                                break
+            except Exception:
+                pass
+
         # Save only the final assistant text (never tool or summarize outputs)
         final_text = collected_content.strip()
         final_input_tokens = input_tokens or estimate_tokens(user_prompt or "")
