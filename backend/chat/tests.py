@@ -408,10 +408,16 @@ class AgentAndStreamingTests(TestCase):
             events.append(text)
         full_stream = "".join(events)
         self.assertIn("event: done", full_stream)
+        self.assertIn("event: token", full_stream)
 
         # Message count shouldn't increase because the assistant turn was replaced
         msg_count_after = await Message.objects.filter(thread=thread).acount()
         self.assertEqual(msg_count_before, msg_count_after)
+
+        # Assistant message content must be refreshed and non-empty
+        await first_assistant_msg.arefresh_from_db()
+        self.assertTrue(len(first_assistant_msg.content) > 0)
+        self.assertEqual(first_assistant_msg.status, "complete")
 
 
 class MemoryAndSummarizationTests(TestCase):

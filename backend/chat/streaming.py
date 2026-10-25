@@ -78,15 +78,39 @@ async def stream_chat_turn(
         if is_regenerate:
             # Prune previous assistant turn from the checkpoint state
             state = await graph.aget_state(config)
+            has_human_in_state = False
             if state and state.values.get("messages"):
                 remove_list = []
                 for m in reversed(state.values["messages"]):
                     if isinstance(m, HumanMessage):
+                        has_human_in_state = True
                         break
                     remove_list.append(RemoveMessage(id=m.id))
                 if remove_list:
-                    await graph.aupdate_state(config, {"messages": remove_list})
-            input_data = None
+                    await graph.aupdate_state(config, {"messages": remove_list, "tool_errors": 0})
+
+            if has_human_in_state:
+                # Checkpoint contains conversation up to last user message; trigger graph from START
+                input_data = {}
+            else:
+                # Checkpoint empty or pruned; rebuild conversation history from DB up to last assistant message
+                rebuilt_messages = []
+                if existing_assistant_message:
+                    db_msgs = [
+                        m async for m in Message.objects.filter(
+                            thread=thread,
+                            created_at__lt=existing_assistant_message.created_at,
+                        ).order_by("created_at")
+                    ]
+                    for dm in db_msgs:
+                        if dm.role == "user":
+                            rebuilt_messages.append(HumanMessage(content=dm.content))
+                        elif dm.role == "assistant":
+                            rebuilt_messages.append(AIMessage(content=dm.content))
+                if not rebuilt_messages and user_prompt:
+                    rebuilt_messages.append(HumanMessage(content=user_prompt))
+
+                input_data = {"messages": rebuilt_messages} if rebuilt_messages else {}
         else:
             input_data = {"messages": [HumanMessage(content=user_prompt)]}
 

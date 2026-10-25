@@ -197,9 +197,17 @@ async def regenerate_thread_view(request, id):
         await release_stream_lock(str(thread.id))
         return HttpResponse(json.dumps({"detail": "No assistant message to regenerate."}), status=400, content_type="application/json")
 
+    last_user_msg = await Message.objects.filter(
+        thread=thread,
+        role="user",
+        created_at__lte=last_assistant.created_at,
+    ).order_by("-created_at").afirst()
+    last_user_prompt = last_user_msg.content if last_user_msg else ""
+
     response = StreamingHttpResponse(
         stream_chat_turn(
             thread=thread,
+            user_prompt=last_user_prompt,
             is_regenerate=True,
             existing_assistant_message=last_assistant,
         ),
