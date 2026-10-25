@@ -1,4 +1,5 @@
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class CodeGenerator(BaseGenerator):
     """Generator for source code files from structured spec."""
@@ -6,8 +7,7 @@ class CodeGenerator(BaseGenerator):
 
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        if "code" not in spec:
-            raise ValueError("Code spec must contain 'code' string field.")
+        validate_spec_for_kind("code", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)

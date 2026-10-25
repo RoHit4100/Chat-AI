@@ -1,5 +1,6 @@
 import csv
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class CsvGenerator(BaseGenerator):
     """Generator for CSV spreadsheets from structured spec."""
@@ -7,8 +8,7 @@ class CsvGenerator(BaseGenerator):
 
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        if not spec.get("headers") and not spec.get("rows"):
-            raise ValueError("CSV spec must contain 'headers' or 'rows'.")
+        validate_spec_for_kind("csv", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)

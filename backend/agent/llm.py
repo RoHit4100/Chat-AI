@@ -43,6 +43,15 @@ class DeterministicFakeChatModel(BaseChatModel):
                 elif isinstance(m, HumanMessage):
                     break
 
+            if is_error and "truncated or invalid" in str(last_msg.content):
+                compact_spec = {"title": "Compact Doc", "paragraphs": ["Compact text"]}
+                return "", [{
+                    "name": "generate_file",
+                    "args": {"kind": "pdf", "name": "compact.pdf", "spec": compact_spec},
+                    "id": "call_gen_compact",
+                    "type": "tool_call",
+                }]
+
             if is_error and tool_error_count < 3:
                 # Retry by emitting another tool call
                 return "", [{"name": "failing_tool", "args": {"query": f"retry_{tool_error_count}"}, "id": f"call_err_{tool_error_count}", "type": "tool_call"}]
@@ -55,10 +64,33 @@ class DeterministicFakeChatModel(BaseChatModel):
         if "call tool" in content or "test tool" in content:
             return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
 
+        if "simulate truncate" in content or "truncated spec" in content:
+            return "", [{
+                "name": "generate_file",
+                "args": "{\"kind\": \"pdf\", \"name\": \"broken.pdf\", \"spec\": {\"title\": \"Broken",
+                "id": "call_trunc_0",
+                "type": "tool_call",
+            }]
+
         if "fail" in content or "error" in content:
             return "", [{"name": "failing_tool", "args": {"query": "fail"}, "id": "call_err_0", "type": "tool_call"}]
 
-        if "revise" in content or "based_on" in content or "add a column" in content:
+        if "make it shorter" in content or "add a skills section" in content or "revise" in content or "based_on" in content or "add a column" in content:
+            if "pdf" in content or "resume" in content:
+                rev_spec = {
+                    "title": "Rohit L. Udamale",
+                    "subtitle": "Backend Developer",
+                    "sections": [
+                        {"heading": "Summary", "content": "Concise summary for version 2."},
+                        {"heading": "Skills", "bullets": ["Python", "Django", "React Native"]}
+                    ]
+                }
+                return "", [{
+                    "name": "generate_file",
+                    "args": {"kind": "pdf", "name": "Rohit_Udamale_Updated_Resume.pdf", "based_on": "1", "spec": rev_spec},
+                    "id": "call_rev_pdf",
+                    "type": "tool_call",
+                }]
             return "", [{
                 "name": "generate_file",
                 "args": {
@@ -68,6 +100,51 @@ class DeterministicFakeChatModel(BaseChatModel):
                     "spec": {"headers": ["Month", "Users", "Churn"], "rows": [["Jan", 100, 5], ["Feb", 200, 8]]},
                 },
                 "id": "call_rev_0",
+                "type": "tool_call",
+            }]
+
+        if "resume" in content:
+            resume_spec = {
+                "title": "Rohit L. Udamale",
+                "subtitle": "Backend & React Native Developer",
+                "header": ["9373369378", "rohitudamale777@gmail.com", "Mumbai, India", "LinkedIn", "GitHub"],
+                "sections": [
+                    {
+                        "heading": "Summary",
+                        "content": "Backend-focused Software Engineer with 2+ years building high-performance systems and React Native apps."
+                    },
+                    {
+                        "heading": "Technical Skills",
+                        "groups": [
+                            {"label": "Backend:", "items": "Django, DRF, REST APIs, Celery, Java"},
+                            {"label": "Mobile/Frontend:", "items": "React Native, React, JavaScript"}
+                        ]
+                    },
+                    {
+                        "heading": "Work Experience",
+                        "entries": [
+                            {
+                                "title": "Solution Analyst",
+                                "subtitle": "Sankey Solutions",
+                                "date": "Sept 2024 - Present",
+                                "bullets": [
+                                    "Architected backend microservices with Django and DRF.",
+                                    "Engineered React Native mobile components for client applications."
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+            kind = "docx" if "docx" in content or "word" in content else "pdf"
+            return "", [{
+                "name": "generate_file",
+                "args": {
+                    "kind": kind,
+                    "name": f"Rohit_Udamale_Updated_Resume.{kind}",
+                    "spec": resume_spec,
+                },
+                "id": f"call_gen_resume_{kind}",
                 "type": "tool_call",
             }]
 

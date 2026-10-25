@@ -1,6 +1,7 @@
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class XlsxGenerator(BaseGenerator):
     """Generator for Excel (.xlsx) workbooks from structured spec using openpyxl."""
@@ -8,10 +9,7 @@ class XlsxGenerator(BaseGenerator):
 
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        has_simple = bool(spec.get("headers") or spec.get("rows"))
-        has_sheets = bool(spec.get("sheets"))
-        if not has_simple and not has_sheets:
-            raise ValueError("XLSX spec must contain 'headers'/'rows' or 'sheets'.")
+        validate_spec_for_kind("xlsx", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)

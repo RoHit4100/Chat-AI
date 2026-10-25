@@ -1,6 +1,7 @@
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class PptxGenerator(BaseGenerator):
     """Generator for PowerPoint (.pptx) presentations using python-pptx."""
@@ -8,8 +9,7 @@ class PptxGenerator(BaseGenerator):
 
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        if not spec.get("title") and not spec.get("slides"):
-            raise ValueError("PPTX spec must contain 'title' or 'slides'.")
+        validate_spec_for_kind("pptx", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)

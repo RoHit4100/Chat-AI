@@ -2,22 +2,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class ChartGenerator(BaseGenerator):
     """Generator for PNG charts from structured spec using matplotlib (Agg backend)."""
     default_extension = ".png"
 
-    ALLOWED_TYPES = {"bar", "line", "pie", "scatter"}
-
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        chart_type = str(spec.get("chart_type", "bar")).lower()
-        if chart_type not in self.ALLOWED_TYPES:
-            raise ValueError(f"Unsupported chart_type '{chart_type}'. Allowed types: {sorted(self.ALLOWED_TYPES)}.")
-
-        has_data = bool(spec.get("x") or spec.get("labels") or spec.get("data") or spec.get("series"))
-        if not has_data and not spec.get("y") and not spec.get("values"):
-            raise ValueError("Chart spec must contain data points ('x'/'labels' and 'y'/'values').")
+        validate_spec_for_kind("chart", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)

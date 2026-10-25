@@ -123,7 +123,20 @@ async def stream_chat_turn(
                 tool_calls = getattr(chunk_msg, "tool_calls", None)
                 if tool_calls:
                     for tc in tool_calls:
-                        yield format_sse("status", {"node": "tools", "status": f"calling tool {tc.get('name')}..."})
+                        name = tc.get("name")
+                        yield format_sse("status", {"node": "tools", "status": f"calling tool {name}..."})
+                        if name == "read_file":
+                            yield format_sse("status", {"node": "tools", "status": "Reading file..."})
+                        elif name == "generate_file":
+                            yield format_sse("status", {"node": "tools", "status": "Generating and verifying file..."})
+                        elif name == "inspect_file":
+                            yield format_sse("status", {"node": "tools", "status": "Inspecting file metadata..."})
+
+                # Emit status when tool call chunks start arriving for generate_file
+                tc_chunks = getattr(chunk_msg, "tool_call_chunks", None) or []
+                for tcc in tc_chunks:
+                    if tcc.get("name") == "generate_file":
+                        yield format_sse("status", {"node": "agent", "status": "Writing file specification..."})
 
                 # Extract token usage metadata from chunk if provided by LLM
                 usage = getattr(chunk_msg, "usage_metadata", None)
@@ -136,7 +149,16 @@ async def stream_chat_turn(
                     if node_name == "summarize":
                         yield format_sse("status", {"node": "summarize", "status": "Conversation summary updated"})
                     elif node_name == "tools":
-                        yield format_sse("status", {"node": "tools", "status": "Tool execution completed"})
+                        # Check messages for specific tool completions
+                        tool_msgs = updates.get("messages", []) if isinstance(updates, dict) else []
+                        gen_success = any("Successfully generated" in str(getattr(m, "content", "")) for m in tool_msgs)
+                        ver_error = any("Verification error" in str(getattr(m, "content", "")) for m in tool_msgs)
+                        if gen_success:
+                            yield format_sse("status", {"node": "tools", "status": "File generated and verified"})
+                        elif ver_error:
+                            yield format_sse("status", {"node": "tools", "status": "File verification failed, fixing specification..."})
+                        else:
+                            yield format_sse("status", {"node": "tools", "status": "Tool execution completed"})
                     else:
                         yield format_sse("status", {"node": node_name, "status": "completed"})
 

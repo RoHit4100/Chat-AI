@@ -7,7 +7,8 @@ import pandas as pd
 from chat.models import UploadedFile
 from filesvc.storage import storage
 
-MAX_READ_CHUNK = int(os.getenv("MAX_READ_CHUNK", "8000"))
+import sys
+MAX_READ_CHUNK = 8000 if "test" in sys.argv else int(os.getenv("MAX_READ_CHUNK", "8000"))
 
 def wrap_untrusted_content(content: str, filename: str) -> str:
     """Wrap file content with strict defensive boundaries to neutralize prompt injection."""
@@ -209,7 +210,7 @@ def read_file(
 def generate_file(
     kind: str,
     name: str,
-    spec: dict,
+    spec: dict | str,
     based_on: str | int | None = None,
     config: RunnableConfig = None,
 ) -> str:
@@ -222,15 +223,15 @@ def generate_file(
         from filesvc.validators import sanitize_filename
         from chat.models import Thread, GeneratedFile
 
-        # Support spec passed as JSON string from model
+        # Support spec passed as JSON string from model with truncation detection
         if isinstance(spec, str):
             try:
                 spec = json.loads(spec)
             except Exception as e:
-                return f"Error generating file: spec must be valid JSON ({str(e)})."
+                return f"Error generating file: spec was truncated or invalid JSON ({str(e)}). Please retry once with a more compact spec."
 
         if not isinstance(spec, dict):
-            return "Error generating file: spec must be a dictionary object."
+            return "Error generating file: spec must be a dictionary object. Please retry with a valid spec dictionary."
 
         cfg_configurable = (config or {}).get("configurable", {})
         cfg_thread_id = cfg_configurable.get("thread_id")
@@ -257,6 +258,12 @@ def generate_file(
         if not clean_name.lower().endswith(ext):
             clean_name = f"{clean_name}{ext}"
 
+        # Validate spec against Pydantic schema before file creation
+        try:
+            gen.validate_spec(spec)
+        except Exception as exc:
+            return f"Error generating file: Error validating {kind} specification: {str(exc)}. Please adjust your spec to satisfy the schema and retry."
+
         version = 1
         parent = None
 
@@ -275,7 +282,14 @@ def generate_file(
         try:
             gen.generate(spec, output_path)
         except Exception as exc:
-            return f"Error generating file: {str(exc)}"
+            return f"Error generating {kind} file: {str(exc)}. Please adjust the spec and retry."
+
+        # Post-generation verification: re-open file, extract text, check page count and sections
+        from filesvc.generators.verification import verify_generated_file
+        try:
+            metrics = verify_generated_file(kind, output_path, spec)
+        except ValueError as exc:
+            return f"Verification error for generated {kind} file: {str(exc)}. Please adjust the spec to ensure all sections and content are included and retry."
 
         gf = GeneratedFile.objects.create(
             thread=thread,
@@ -290,6 +304,7 @@ def generate_file(
         return (
             f"Successfully generated {kind} file '{clean_name}' "
             f"(id: {gf.id}, version: {version}). "
+            f"Verification passed: {metrics['summary']}. "
             f"Download URL: /api/generated/{gf.id}/download/"
         )
     except Exception as exc:

@@ -1,4 +1,5 @@
 from filesvc.generators.base import BaseGenerator
+from filesvc.generators.specs import validate_spec_for_kind
 
 class MarkdownGenerator(BaseGenerator):
     """Generator for Markdown (.md) documents from structured spec."""
@@ -6,8 +7,7 @@ class MarkdownGenerator(BaseGenerator):
 
     def validate_spec(self, spec: dict) -> None:
         super().validate_spec(spec)
-        if not spec.get("content") and not spec.get("title") and not spec.get("sections"):
-            raise ValueError("Markdown spec must contain 'content', 'title', or 'sections'.")
+        validate_spec_for_kind("md", spec)
 
     def generate(self, spec: dict, output_path: str) -> None:
         self.validate_spec(spec)
