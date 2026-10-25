@@ -13,6 +13,7 @@ import {
   Sparkles,
   GitCommit,
   Check,
+  AlertTriangle,
 } from "lucide-react";
 import { getToken } from "../auth";
 import { CodeBlock } from "./CodeBlock";
@@ -176,26 +177,71 @@ export function FileCard({ file, isStreaming = false }) {
           return;
         }
 
-        // XLSX preview: inspect spec or table structure
+        // XLSX preview: fetch cached values (data_only) from backend preview endpoint
         if (ext === "xlsx" || kind === "xlsx") {
+          try {
+            const pRes = await fetch(`/api/generated/${id}/preview/`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              if (active && pData && Array.isArray(pData.rows)) {
+                setPreviewData({
+                  type: "table",
+                  headers: pData.headers || [],
+                  rows: pData.rows,
+                  totalLines: pData.total_rows || pData.rows.length,
+                  warning: pData.warning,
+                  has_uncalculated_formulas: pData.has_uncalculated_formulas,
+                });
+                return;
+              }
+            }
+          } catch (e) {
+            // fallback to spec if preview endpoint fails
+          }
+
           if (spec && Array.isArray(spec.rows)) {
             const headers = Array.isArray(spec.headers) ? spec.headers : [];
+            const normalizedRows = spec.rows.map((r) =>
+              Array.isArray(r)
+                ? r.map((c) => (c && typeof c === "object" ? c.value ?? "" : c))
+                : [r]
+            );
+            const hasFormulaWithoutVal = spec.rows.some((r) =>
+              Array.isArray(r) &&
+              r.some(
+                (c) =>
+                  (typeof c === "string" && c.startsWith("=")) ||
+                  (c && typeof c === "object" && c.formula && c.value === null)
+              )
+            );
             setPreviewData({
               type: "table",
               headers,
-              rows: spec.rows.slice(0, 15),
-              totalLines: spec.rows.length,
+              rows: normalizedRows,
+              totalLines: normalizedRows.length,
+              warning: hasFormulaWithoutVal ? "formulas not calculated" : null,
+              has_uncalculated_formulas: hasFormulaWithoutVal,
             });
             return;
           }
           if (spec && spec.sheets) {
             const firstSheet = Object.values(spec.sheets)[0];
             if (firstSheet && Array.isArray(firstSheet.rows)) {
+              const headers = firstSheet.headers || [];
+              const normalizedRows = firstSheet.rows.map((r) =>
+                Array.isArray(r)
+                  ? r.map((c) => (c && typeof c === "object" ? c.value ?? "" : c))
+                  : [r]
+              );
               setPreviewData({
                 type: "table",
-                headers: firstSheet.headers || [],
-                rows: firstSheet.rows.slice(0, 15),
-                totalLines: firstSheet.rows.length,
+                headers,
+                rows: normalizedRows,
+                totalLines: normalizedRows.length,
+                warning: null,
+                has_uncalculated_formulas: false,
               });
               return;
             }
@@ -409,6 +455,12 @@ export function FileCard({ file, isStreaming = false }) {
               {/* CSV / XLSX Small Table preview */}
               {previewData.type === "table" && (
                 <div className="preview-table-wrapper">
+                  {previewData.warning && (
+                    <div className="preview-formula-warning" style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", background: "rgba(234, 179, 8, 0.12)", border: "1px solid rgba(234, 179, 8, 0.35)", borderRadius: "6px", color: "#facc15", fontSize: "0.85rem", marginBottom: "10px" }}>
+                      <AlertTriangle size={15} />
+                      <span>Warning: {previewData.warning}</span>
+                    </div>
+                  )}
                   <div className="preview-table-scroll">
                     <table className="preview-data-table">
                       {previewData.headers && previewData.headers.length > 0 && (
@@ -421,21 +473,19 @@ export function FileCard({ file, isStreaming = false }) {
                         </thead>
                       )}
                       <tbody>
-                        {previewData.rows.map((row, rIdx) => (
-                          <tr key={rIdx}>
-                            {row.map((cell, cIdx) => (
-                              <td key={cIdx}>{cell}</td>
-                            ))}
-                          </tr>
-                        ))}
+                        {previewData.rows.map((row, rIdx) => {
+                          const isTotal = row[0] && String(row[0]).trim().toLowerCase() === "total";
+                          return (
+                            <tr key={rIdx} style={isTotal ? { fontWeight: "bold", background: "rgba(255, 255, 255, 0.06)", borderTop: "2px solid rgba(255, 255, 255, 0.25)" } : {}}>
+                              {row.map((cell, cIdx) => (
+                                <td key={cIdx} style={isTotal ? { fontWeight: "bold" } : {}}>{cell !== null && cell !== undefined ? String(cell) : ""}</td>
+                              ))}
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                  {previewData.totalLines > 15 && (
-                    <div className="preview-table-footer">
-                      Showing first 15 of {previewData.totalLines} rows. Download full file to view all data.
-                    </div>
-                  )}
                 </div>
               )}
 

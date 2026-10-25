@@ -182,3 +182,68 @@ class GeneratedFileDownloadView(APIView):
         response["X-Content-Type-Options"] = "nosniff"
         response["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
         return response
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GeneratedFilePreviewView(APIView):
+    """Authenticated endpoint to return structured preview data for generated files (XLSX, CSV, etc.)."""
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ChatRateThrottle]
+
+    def get(self, request, file_id):
+        from chat.models import GeneratedFile
+        gf = GeneratedFile.objects.filter(id=file_id).select_related("thread").first()
+        if not gf or gf.thread.user_id != request.user.id:
+            return Response({"detail": "Generated file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not gf.path or not os.path.exists(gf.path):
+            return Response({"detail": "File data not found on disk."}, status=status.HTTP_404_NOT_FOUND)
+
+        clean_kind = (gf.kind or "").lower()
+        if clean_kind in ("xlsx", "xls"):
+            import openpyxl
+            try:
+                wb_data = openpyxl.load_workbook(gf.path, data_only=True)
+                wb_raw = openpyxl.load_workbook(gf.path, data_only=False)
+                ws_data = wb_data.active
+                ws_raw = wb_raw.active
+
+                headers = []
+                if ws_data.max_row >= 1:
+                    headers = [ws_data.cell(1, c).value or "" for c in range(1, ws_data.max_column + 1)]
+
+                rows = []
+                has_uncalculated = False
+                for r in range(2, ws_data.max_row + 1):
+                    row_vals = []
+                    for c in range(1, ws_data.max_column + 1):
+                        v_cached = ws_data.cell(r, c).value
+                        v_raw = ws_raw.cell(r, c).value
+                        if isinstance(v_raw, str) and v_raw.startswith("=") and v_cached is None:
+                            has_uncalculated = True
+
+                        cell_fmt = ws_data.cell(r, c).number_format
+                        if v_cached is None:
+                            formatted = ""
+                        elif isinstance(v_cached, float) and cell_fmt and "%" in cell_fmt:
+                            formatted = f"{v_cached * 100:.1f}%"
+                        elif isinstance(v_cached, (int, float)) and cell_fmt and ("#" in cell_fmt or "," in cell_fmt):
+                            formatted = f"{int(v_cached):,}" if isinstance(v_cached, int) or v_cached.is_integer() else f"{v_cached:,.2f}"
+                        else:
+                            formatted = str(v_cached)
+                        row_vals.append(formatted)
+                    rows.append(row_vals)
+
+                warning = "formulas not calculated" if has_uncalculated else None
+                return Response({
+                    "type": "table",
+                    "headers": headers,
+                    "rows": rows,
+                    "total_rows": len(rows),
+                    "has_uncalculated_formulas": has_uncalculated,
+                    "warning": warning,
+                })
+            except Exception as exc:
+                return Response({"detail": f"Preview failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"type": "generic", "name": gf.name, "kind": gf.kind})
+

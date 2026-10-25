@@ -11,7 +11,9 @@ backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 os.environ["FAKE_LLM"] = "1"
-os.environ["USE_SQLITE"] = "1"
+# If running in Docker with DATABASE_URL, keep PostgreSQL; otherwise default to SQLite
+if "DATABASE_URL" not in os.environ and "USE_SQLITE" not in os.environ:
+    os.environ["USE_SQLITE"] = "1"
 # Lower threshold so compactions trigger regularly across 200 messages
 os.environ["MAX_TOKENS"] = "200"
 os.environ["KEEP_LAST"] = "8"
@@ -24,6 +26,7 @@ from django.core.management import call_command
 call_command("migrate", verbosity=0)
 
 from django.test import AsyncClient
+from django.contrib.auth import get_user_model
 from chat.models import Thread, Message
 from agent.graph import get_compiled_graph
 
@@ -32,13 +35,35 @@ async def run_long_thread_demo():
     print("STARTING LONG THREAD DEMO (200+ MESSAGES)")
     print("=" * 70)
 
-    token = "service-token-long-thread-tester"
+    User = get_user_model()
+    # Resolve demo user (Keycloak sub fcfd5ad2-ab47-4d20-91b6-a2ba37994cbc or email demo@example.com)
+    demo_user = (
+        await User.objects.filter(username="fcfd5ad2-ab47-4d20-91b6-a2ba37994cbc").afirst()
+        or await User.objects.filter(email="demo@example.com").afirst()
+        or await User.objects.filter(username="demo").afirst()
+    )
+    if not demo_user:
+        demo_user = await User.objects.acreate(
+            username="fcfd5ad2-ab47-4d20-91b6-a2ba37994cbc",
+            email="demo@example.com",
+        )
+
+    token = f"service-token-{demo_user.username}"
     client = AsyncClient()
 
-    # Create a fresh thread
+    # Ensure there will be exactly one chat for the demo user: delete existing threads
+    demo_users = [u async for u in User.objects.filter(email="demo@example.com")]
+    for candidate in [demo_user, await User.objects.filter(username="demo").afirst()]:
+        if candidate and candidate not in demo_users:
+            demo_users.append(candidate)
+    for u in demo_users:
+        async for t in Thread.objects.filter(user=u):
+            await t.adelete()
+
+    # Create a fresh thread for demo user
     resp = await client.post(
         "/api/threads/",
-        data=json.dumps({"title": "Long Thread Demo"}),
+        data=json.dumps({"title": "Project Orion"}),
         content_type="application/json",
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -47,17 +72,19 @@ async def run_long_thread_demo():
         return
     thread_data = resp.json()
     thread_id = thread_data["id"]
-    print(f"Created Thread: {thread_id}")
+    print(f"Created Thread for Demo User ({demo_user.username}): {thread_id}")
 
     # Drive 205 messages through the API
     total_messages = 205
     secret_code = "OMEGA-42"
 
     for i in range(1, total_messages + 1):
-        if i == 3:
+        if i == 1:
+            content = "My project is called Orion."
+        elif i == 2:
             content = f"Important secret fact: The project launch code is {secret_code}."
         elif i == total_messages:
-            content = "What was the project launch code mentioned early in our chat?"
+            content = "What was the name of my project and the launch code mentioned early in our chat?"
         else:
             content = f"Update step #{i}: verified system component {i % 10} operational."
 
@@ -98,6 +125,31 @@ async def run_long_thread_demo():
     print(f"Active messages in LangGraph working memory:   {final_active_msgs} (Kept <= KEEP_LAST)")
     print(f"Final rolling summary length:                   {len(final_summary)} characters")
     print(f"Rolling summary preview:                        {final_summary[:200]}...")
+    last_asst = await Message.objects.filter(thread_id=thread_id, role="assistant").order_by("-created_at").afirst()
+    if last_asst:
+        print(f"Final Assistant Recall Response:                {last_asst.content}")
+
+    # Ensure all demo user accounts have this exact one thread
+    original_thread = await Thread.objects.aget(id=thread_id)
+    messages_to_copy = [m async for m in Message.objects.filter(thread_id=thread_id).order_by("created_at")]
+    for other_user in demo_users:
+        if other_user.id != demo_user.id:
+            async for t in Thread.objects.filter(user=other_user):
+                await t.adelete()
+            cloned = await Thread.objects.acreate(
+                user=other_user,
+                title=original_thread.title,
+            )
+            for m in messages_to_copy:
+                await Message.objects.acreate(
+                    thread=cloned,
+                    role=m.role,
+                    content=m.content,
+                    status=m.status,
+                    input_tokens=m.input_tokens,
+                    output_tokens=m.output_tokens,
+                )
+
     print("=" * 70)
     print("SUCCESS: 200+ messages processed through API with rolling summarization!")
 

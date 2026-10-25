@@ -56,8 +56,91 @@ class DeterministicFakeChatModel(BaseChatModel):
             if is_error and tool_error_count < 3:
                 # Retry by emitting another tool call
                 return "", [{"name": "failing_tool", "args": {"query": f"retry_{tool_error_count}"}, "id": f"call_err_{tool_error_count}", "type": "tool_call"}]
-            if tool_error_count >= 3:
+            if is_error and tool_error_count >= 3:
                 return "Tool execution failed after 3 consecutive attempts. Stopping loop and explaining failure.", None
+
+            # Find last human query
+            last_human = ""
+            for m in reversed(messages):
+                if isinstance(m, HumanMessage):
+                    last_human = str(getattr(m, "content", "")).lower()
+                    break
+
+            # Handle post-read_file for revenue spreadsheet
+            if ("month" in str(last_msg.content).lower() or "revenue" in str(last_msg.content).lower()) and ("revenue" in last_human or "monthly" in last_human):
+                revenue_spec = {
+                    "headers": ["Month", "Revenue (INR)"],
+                    "rows": [
+                        ["Jan", {"value": 1240000, "number_format": "#,##0"}],
+                        ["Feb", {"value": 1085000, "number_format": "#,##0"}],
+                        ["Mar", {"value": 1310000, "number_format": "#,##0"}],
+                        ["Apr", {"value": 1425000, "number_format": "#,##0"}],
+                        ["May", {"value": 1390000, "number_format": "#,##0"}],
+                        ["Jun", {"value": 1520000, "number_format": "#,##0"}],
+                        ["Jul", {"value": 1610000, "number_format": "#,##0"}],
+                        ["Aug", {"value": 1785000, "number_format": "#,##0"}],
+                        ["Sep", {"value": 1695000, "number_format": "#,##0"}],
+                        ["Oct", {"value": 1840000, "number_format": "#,##0"}],
+                        ["Nov", {"value": 1925000, "number_format": "#,##0"}],
+                        ["Dec", {"value": 1760000, "number_format": "#,##0"}],
+                        ["Total", {"value": 18585000, "formula": "=SUM(B2:B13)", "bold": True, "number_format": "#,##0"}],
+                    ],
+                }
+                return "", [{
+                    "name": "generate_file",
+                    "args": {"kind": "xlsx", "name": "monthly_revenue.xlsx", "spec": revenue_spec},
+                    "id": "call_gen_rev_xlsx",
+                    "type": "tool_call",
+                }]
+
+            # Handle post-read_generated_spec for growth revision
+            if ("headers" in str(last_msg.content) or "growth" in last_human or "add a column" in last_human) and "growth" in last_human:
+                growth_spec = {
+                    "headers": ["Month", "Revenue (INR)", "MoM Growth"],
+                    "rows": [
+                        ["Jan", {"value": 1240000, "number_format": "#,##0"}, ""],
+                        ["Feb", {"value": 1085000, "number_format": "#,##0"}, {"value": -0.125, "formula": "=(B3-B2)/B2", "number_format": "0.0%"}],
+                        ["Mar", {"value": 1310000, "number_format": "#,##0"}, {"value": 0.2074, "formula": "=(B4-B3)/B3", "number_format": "0.0%"}],
+                        ["Apr", {"value": 1425000, "number_format": "#,##0"}, {"value": 0.0878, "formula": "=(B5-B4)/B4", "number_format": "0.0%"}],
+                        ["May", {"value": 1390000, "number_format": "#,##0"}, {"value": -0.0246, "formula": "=(B6-B5)/B5", "number_format": "0.0%"}],
+                        ["Jun", {"value": 1520000, "number_format": "#,##0"}, {"value": 0.0935, "formula": "=(B7-B6)/B6", "number_format": "0.0%"}],
+                        ["Jul", {"value": 1610000, "number_format": "#,##0"}, {"value": 0.0592, "formula": "=(B8-B7)/B7", "number_format": "0.0%"}],
+                        ["Aug", {"value": 1785000, "number_format": "#,##0"}, {"value": 0.1087, "formula": "=(B9-B8)/B8", "number_format": "0.0%"}],
+                        ["Sep", {"value": 1695000, "number_format": "#,##0"}, {"value": -0.0504, "formula": "=(B10-B9)/B9", "number_format": "0.0%"}],
+                        ["Oct", {"value": 1840000, "number_format": "#,##0"}, {"value": 0.0855, "formula": "=(B11-B10)/B10", "number_format": "0.0%"}],
+                        ["Nov", {"value": 1925000, "number_format": "#,##0"}, {"value": 0.0462, "formula": "=(B12-B11)/B11", "number_format": "0.0%"}],
+                        ["Dec", {"value": 1760000, "number_format": "#,##0"}, {"value": -0.0857, "formula": "=(B13-B12)/B12", "number_format": "0.0%"}],
+                        ["Total", {"value": 18585000, "formula": "=SUM(B2:B13)", "bold": True, "number_format": "#,##0"}, ""],
+                    ],
+                }
+                # Find parent file id
+                parent_id = "1"
+                for m in messages:
+                    if isinstance(m, SystemMessage) and "Current File Manifest:" in str(m.content):
+                        import re
+                        m_ids = re.findall(r"'id':\s*'([^']+)'", str(m.content))
+                        if m_ids:
+                            parent_id = m_ids[-1]
+                        break
+                return "", [{
+                    "name": "generate_file",
+                    "args": {"kind": "xlsx", "name": "monthly_revenue.xlsx", "based_on": str(parent_id), "spec": growth_spec},
+                    "id": "call_gen_rev_growth",
+                    "type": "tool_call",
+                }]
+
+            # Handle reply rule after successful file generation
+            if "Successfully generated" in str(last_msg.content):
+                content_str = str(last_msg.content)
+                if "Total row:" in content_str or "Total:" in content_str:
+                    import re
+                    tot_m = re.search(r"Total(?: row)?:\s*\(([^)]+)\)", content_str)
+                    tot_info = tot_m.group(1) if tot_m else "18,585,000"
+                    if "MoM Growth" in content_str or "growth" in last_human:
+                        return f"I have revised the Excel file to add the month-over-month growth percentage column. Total revenue is {tot_info}.", None
+                    return f"I have created the Excel file monthly_revenue.xlsx with the monthly revenue data and a total row. Total revenue is {tot_info}.", None
+                return f"Successfully generated file. {content_str}", None
+
             return f"Processed tool output: {last_msg.content}. Completed.", None
 
         # Check if last message is multimodal (e.g. vision model call with image_url)
@@ -72,6 +155,19 @@ class DeterministicFakeChatModel(BaseChatModel):
 
         # Check user message text
         content = str(getattr(last_msg, "content", "")).lower()
+
+        if "orion" in content or "my project is called" in content:
+            return "Understood! I have noted that your project is called Orion. How can I assist you with Project Orion today?", None
+
+        if "important secret fact" in content or "secret launch code is" in content:
+            return "Acknowledged. I have recorded the secret launch code OMEGA-42 for Project Orion.", None
+
+        if "what was the name" in content or "early in our chat" in content or "recall" in content:
+            return "Based on our earlier conversation preserved in the rolling summary, your project is called Orion, and the project launch code is OMEGA-42.", None
+
+        if "update step #" in content:
+            return "System component operational status logged and verified.", None
+
         if "call tool" in content or "test tool" in content:
             return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
 
@@ -91,6 +187,31 @@ class DeterministicFakeChatModel(BaseChatModel):
 
         if "fail" in content or "error" in content:
             return "", [{"name": "failing_tool", "args": {"query": "fail"}, "id": "call_err_0", "type": "tool_call"}]
+
+        # Resolve target uploaded file and latest generated file
+        target_file_id = "1"
+        latest_gen_id = "1"
+        for m in messages:
+            if isinstance(m, SystemMessage) and "Current File Manifest:" in str(m.content):
+                import re
+                up_match = re.search(r"'id':\s*'([^']+)'.*?'kind':\s*'uploaded'", str(m.content))
+                if up_match:
+                    target_file_id = up_match.group(1)
+                else:
+                    first_match = re.search(r"'id':\s*'([^']+)'", str(m.content))
+                    if first_match:
+                        target_file_id = first_match.group(1)
+
+                gen_matches = re.findall(r"'id':\s*'([^']+)'.*?'kind':\s*'(?:generated|xlsx|pdf)'", str(m.content))
+                if gen_matches:
+                    latest_gen_id = gen_matches[-1]
+                break
+
+        if "growth" in content or ("add a column" in content and "growth" in content):
+            return "", [{"name": "read_generated_spec", "args": {"file_id": latest_gen_id}, "id": "call_read_spec_0", "type": "tool_call"}]
+
+        if ("monthly revenue" in content or "revenue" in content) and ("excel" in content or "spreadsheet" in content or "total row" in content or "create" in content):
+            return "", [{"name": "read_file", "args": {"file_id": target_file_id}, "id": "call_read_sales_0", "type": "tool_call"}]
 
         if "make it shorter" in content or "add a skills section" in content or "revise" in content or "based_on" in content or "add a column" in content:
             if "pdf" in content or "resume" in content:

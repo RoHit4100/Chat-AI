@@ -4,6 +4,7 @@ from filesvc.views import (
     ThreadGeneratedFilesView,
     FileDownloadView,
     GeneratedFileDownloadView,
+    GeneratedFilePreviewView,
 )
 
 urlpatterns = [
@@ -15,4 +16,6 @@ urlpatterns = [
     path("files/<str:file_id>/download", FileDownloadView.as_view(), name="file-download-noslash"),
     path("generated/<str:file_id>/download/", GeneratedFileDownloadView.as_view(), name="generated-download"),
     path("generated/<str:file_id>/download", GeneratedFileDownloadView.as_view(), name="generated-download-noslash"),
+    path("generated/<str:file_id>/preview/", GeneratedFilePreviewView.as_view(), name="generated-preview"),
+    path("generated/<str:file_id>/preview", GeneratedFilePreviewView.as_view(), name="generated-preview-noslash"),
 ]

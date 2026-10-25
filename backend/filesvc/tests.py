@@ -653,3 +653,121 @@ class FileServiceTests(TransactionTestCase):
         gf = await GeneratedFile.objects.filter(thread=self.thread1, name="report.md").afirst()
         self.assertIsNotNone(gf)
         self.assertEqual(gf.version, 1)
+
+    def test_xlsx_generation_and_openpyxl_cached_values(self):
+        """XLSX generator writes computed values and number formats so openpyxl data_only=True reads them."""
+        import openpyxl
+        import tempfile
+        from filesvc.generators.registry import get_generator
+
+        gen = get_generator("xlsx")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_path = os.path.join(tmp_dir, "test_cached_calc.xlsx")
+            spec = {
+                "headers": ["Month", "Revenue (INR)", "MoM Growth"],
+                "rows": [
+                    ["Jan", {"value": 1000, "number_format": "#,##0"}, ""],
+                    ["Feb", {"value": 1500, "number_format": "#,##0"}, {"value": 0.5, "number_format": "0.0%"}],
+                    ["Total", {"value": 2500, "formula": "=SUM(B2:B3)", "bold": True, "number_format": "#,##0"}, ""],
+                ],
+            }
+            gen.generate(spec, out_path)
+
+            # Verify with openpyxl data_only=True
+            wb_cached = openpyxl.load_workbook(out_path, data_only=True)
+            sheet = wb_cached.active
+            self.assertEqual(sheet.max_row, 4)
+            self.assertEqual(sheet.max_column, 3)
+
+            # Check total cell (B4) has cached value 2500 and is not None
+            tot_val = sheet.cell(4, 2).value
+            self.assertEqual(tot_val, 2500)
+
+            # Check first period growth (C2) is None or empty string
+            self.assertIn(sheet.cell(2, 3).value, (None, ""))
+
+            # Check total row growth (C4) is None or empty string
+            self.assertIn(sheet.cell(4, 3).value, (None, ""))
+
+    def test_xlsx_verification_catches_sum_mismatch_and_non_blank_growth(self):
+        """Verification raises ValueError if total sum mismatches or growth column rules are violated."""
+        import tempfile
+        from filesvc.generators.verification import verify_generated_file
+        from filesvc.generators.registry import get_generator
+
+        gen = get_generator("xlsx")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bad_sum_path = os.path.join(tmp_dir, "bad_sum.xlsx")
+            spec_bad_sum = {
+                "headers": ["Month", "Revenue (INR)"],
+                "rows": [
+                    ["Jan", 1000],
+                    ["Feb", 1500],
+                    ["Total", 9999],  # Incorrect sum
+                ],
+            }
+            gen.generate(spec_bad_sum, bad_sum_path)
+            with self.assertRaises(ValueError) as ctx:
+                verify_generated_file("xlsx", bad_sum_path, spec_bad_sum)
+            self.assertIn("does not match sum of data rows", str(ctx.exception))
+
+            # Check invalid first period growth raises ValueError
+            bad_growth_path = os.path.join(tmp_dir, "bad_growth.xlsx")
+            spec_bad_growth = {
+                "headers": ["Month", "Revenue (INR)", "MoM Growth"],
+                "rows": [
+                    ["Jan", 1000, 0.10],  # Must be blank
+                    ["Feb", 1500, 0.50],
+                    ["Total", 2500, ""],
+                ],
+            }
+            gen.generate(spec_bad_growth, bad_growth_path)
+            with self.assertRaises(ValueError) as ctx2:
+                verify_generated_file("xlsx", bad_growth_path, spec_bad_growth)
+            self.assertIn("first period growth cell C2 must be blank", str(ctx2.exception))
+
+    def test_generated_file_preview_endpoint(self):
+        """Preview endpoint returns structured table with cached values and handles cross-tenant permissions."""
+        import tempfile
+        from filesvc.generators.registry import get_generator
+
+        gen = get_generator("xlsx")
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        import shutil
+        xlsx_path = os.path.join(tmp_dir, "preview_sample.xlsx")
+        spec = {
+            "headers": ["Month", "Revenue (INR)"],
+            "rows": [
+                ["Jan", {"value": 1240000, "number_format": "#,##0"}],
+                ["Feb", {"value": 1085000, "number_format": "#,##0"}],
+                ["Total", {"value": 2325000, "bold": True, "number_format": "#,##0"}],
+            ],
+        }
+        gen.generate(spec, xlsx_path)
+
+        gf = GeneratedFile.objects.create(
+            thread=self.thread1,
+            name="preview_revenue.xlsx",
+            kind="xlsx",
+            version=1,
+            spec=spec,
+            path=xlsx_path,
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token_user1}")
+        res = self.client.get(f"/api/generated/{gf.id}/preview/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        data = res.json()
+        self.assertEqual(data["type"], "table")
+        self.assertEqual(data["headers"], ["Month", "Revenue (INR)"])
+        self.assertEqual(len(data["rows"]), 3)
+        self.assertEqual(data["rows"][2], ["Total", "2,325,000"])
+        self.assertFalse(data["has_uncalculated_formulas"])
+        self.assertIsNone(data["warning"])
+
+        # Cross-user unauthorized returns 404
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token_user2}")
+        res_cross = self.client.get(f"/api/generated/{gf.id}/preview/")
+        self.assertEqual(res_cross.status_code, status.HTTP_404_NOT_FOUND)
+

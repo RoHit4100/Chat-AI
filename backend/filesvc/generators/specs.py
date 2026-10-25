@@ -118,18 +118,82 @@ class DocumentSpec(BaseModel):
             raise ValueError("Document spec must contain a 'title' or at least one 'sections', 'paragraphs', or 'tables' item.")
         return self
 
+class CellSpec(BaseModel):
+    """Specification for an individual spreadsheet cell with typed formatting and optional formula."""
+    value: Optional[Any] = Field(default=None, description="Computed scalar value (e.g. numeric total, percentage, string)")
+    number_format: Optional[str] = Field(default=None, description="Format string, e.g. '#,##0' for currency/counts, '0.0%' for percentages")
+    bold: Optional[bool] = Field(default=False, description="Whether cell text is bold")
+    formula: Optional[str] = Field(default=None, description="Optional Excel formula string, e.g. '=SUM(B2:B13)'")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_cell(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            if isinstance(data, str) and data.startswith("="):
+                return {"formula": data, "value": None}
+            return {"value": data}
+        return data
+
 class SheetSpec(BaseModel):
     """Specification for a single sheet in an Excel workbook."""
     name: Optional[str] = Field(default="Sheet1")
     headers: Optional[List[str]] = Field(default_factory=list)
-    rows: Optional[List[List[Any]]] = Field(default_factory=list)
+    rows: Optional[List[List[Union[CellSpec, Any]]]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_sheet(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("headers") and data.get("columns"):
+                cols = data.get("columns")
+                if isinstance(cols, list):
+                    headers = []
+                    for c in cols:
+                        if isinstance(c, dict):
+                            headers.append(str(c.get("header") or c.get("name") or c.get("title") or ""))
+                        else:
+                            headers.append(str(c))
+                    data["headers"] = headers
+            elif isinstance(data.get("headers"), list):
+                headers = []
+                for h in data["headers"]:
+                    if isinstance(h, dict):
+                        headers.append(str(h.get("header") or h.get("name") or h.get("title") or ""))
+                    else:
+                        headers.append(str(h))
+                data["headers"] = headers
+        return data
 
 class SpreadsheetSpec(BaseModel):
     """Specification for XLSX and CSV generators."""
     sheet_name: Optional[str] = Field(default="Data")
     headers: Optional[List[str]] = Field(default_factory=list)
-    rows: Optional[List[List[Any]]] = Field(default_factory=list)
+    rows: Optional[List[List[Union[CellSpec, Any]]]] = Field(default_factory=list)
     sheets: Optional[List[SheetSpec]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_spreadsheet_data(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("headers") and data.get("columns"):
+                cols = data.get("columns")
+                if isinstance(cols, list):
+                    headers = []
+                    for c in cols:
+                        if isinstance(c, dict):
+                            headers.append(str(c.get("header") or c.get("name") or c.get("title") or ""))
+                        else:
+                            headers.append(str(c))
+                    data["headers"] = headers
+            elif isinstance(data.get("headers"), list):
+                headers = []
+                for h in data["headers"]:
+                    if isinstance(h, dict):
+                        headers.append(str(h.get("header") or h.get("name") or h.get("title") or ""))
+                    else:
+                        headers.append(str(h))
+                data["headers"] = headers
+        return data
 
     @model_validator(mode="after")
     def validate_spreadsheet(self) -> "SpreadsheetSpec":

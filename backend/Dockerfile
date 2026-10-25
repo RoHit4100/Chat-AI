@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     poppler-utils \
     fonts-dejavu-core \
+    libreoffice-calc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pinned dependencies
