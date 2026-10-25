@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { useChatStream } from "./hooks/useChatStream";
-import { initAuth, getToken, getUserInfo, handleAuthSessionExpired } from "./auth";
+import { initAuth, getToken, getUserInfo, handleAuthSessionExpired, login } from "./auth";
 
 export default function App() {
   const [threads, setThreads] = useState([]);
@@ -10,6 +10,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoadingThreads, setIsLoadingThreads] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   // Callback to update thread title in list when first message is sent
   const handleTitleGenerated = useCallback((prompt) => {
@@ -108,7 +110,15 @@ export default function App() {
   // Initial authentication & thread reload on refresh
   useEffect(() => {
     async function setup() {
-      await initAuth();
+      setIsAuthLoading(true);
+      const authenticated = await initAuth();
+      setIsAuthenticated(authenticated);
+      setIsAuthLoading(false);
+
+      if (!authenticated) {
+        return;
+      }
+
       setUser(getUserInfo());
 
       const loadedThreads = await fetchThreads();
@@ -192,6 +202,41 @@ export default function App() {
   };
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  if (isAuthLoading) {
+    return (
+      <div className="auth-loading-screen">
+        <div className="auth-loading-card">
+          <div className="auth-spinner"></div>
+          <h2>Connecting to Keycloak...</h2>
+          <p>Verifying secure identity session</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-card-badge">Keycloak OIDC</div>
+          <h1 className="auth-card-title">Chat-AI Platform</h1>
+          <p className="auth-card-subtitle">
+            Enterprise conversational AI with multi-tenant document intelligence. Sign in to access your chat history and files.
+          </p>
+          <div className="auth-card-actions">
+            <button className="auth-login-btn" onClick={login}>
+              Log In with Keycloak
+            </button>
+          </div>
+          <div className="auth-card-hints">
+            <p>Demo credentials: <code>demo</code> / <code>demo1234</code></p>
+            <p>Or click <strong>Register</strong> on the Keycloak screen to create a new account.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">

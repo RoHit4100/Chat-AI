@@ -40,9 +40,8 @@ export async function initAuth() {
 
   try {
     const authenticated = await keycloak.init({
-      onLoad: "check-sso",
+      onLoad: "login-required",
       pkceMethod: "S256",
-      silentCheckSsoRedirectUri: window.location.origin + "/silent-check-sso.html",
       checkLoginIframe: false,
     });
     isInitialized = true;
@@ -92,16 +91,13 @@ export function logout() {
 }
 
 export function getUserInfo() {
-  if (keycloak.tokenParsed) {
+  if (keycloak.authenticated && keycloak.tokenParsed) {
     return {
       username: keycloak.tokenParsed.preferred_username || keycloak.tokenParsed.sub || "User",
-      email: keycloak.tokenParsed.email || "demo@example.com",
+      email: keycloak.tokenParsed.email || "",
     };
   }
-  return {
-    username: "Demo User",
-    email: "demo@example.com",
-  };
+  return null;
 }
 
 export { keycloak };
