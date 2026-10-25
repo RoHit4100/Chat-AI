@@ -2,10 +2,12 @@ import os
 import re
 from typing import Any, List
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
     RemoveMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
 from agent.state import AgentState
@@ -31,6 +33,82 @@ def sanitize_tool_output(content: str, max_chars: int = 2000) -> str:
         content = content[:max_chars] + "\n... [tool output truncated]"
 
     return content
+
+def sanitize_message_history(messages: List[BaseMessage]) -> tuple[List[BaseMessage], List[str]]:
+    """Ensure message sequence strictly adheres to LLM provider requirements (OpenAI, Anthropic, Google).
+    Rules enforced:
+    1. A ToolMessage must be immediately preceded by an AIMessage with tool_calls.
+    2. Every ToolMessage must correspond to an expected tool_call_id from the parent AIMessage.
+    3. Any orphaned ToolMessage is converted into context or dropped, and its ID is returned for checkpoint cleanup.
+    4. Any AIMessage with tool_calls must have all tool_calls answered before another Human/AI message; missing ones are synthesized.
+
+    Returns:
+        (sanitized_messages, orphaned_message_ids)
+    """
+    if not messages:
+        return [], []
+
+    valid_messages: List[BaseMessage] = []
+    orphaned_ids: List[str] = []
+
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            # Find the parent AIMessage among preceding messages
+            last_ai = None
+            for prev in reversed(valid_messages):
+                if isinstance(prev, AIMessage):
+                    last_ai = prev
+                    break
+                elif not isinstance(prev, ToolMessage):
+                    break
+
+            is_valid = False
+            if last_ai:
+                tool_calls = getattr(last_ai, "tool_calls", []) or []
+                expected_ids = {tc.get("id") for tc in tool_calls if isinstance(tc, dict)}
+                msg_tool_id = getattr(msg, "tool_call_id", None)
+                if msg_tool_id and msg_tool_id in expected_ids:
+                    is_valid = True
+
+            if is_valid:
+                valid_messages.append(msg)
+            else:
+                msg_id = getattr(msg, "id", None)
+                if msg_id:
+                    orphaned_ids.append(str(msg_id))
+                content = str(getattr(msg, "content", "")).strip()
+                if content:
+                    valid_messages.append(HumanMessage(content=f"[Context from prior tool output]: {content}"))
+
+        elif isinstance(msg, (AIMessage, HumanMessage)):
+            # If previous messages include an AIMessage with tool_calls, verify all tool_calls were answered
+            last_ai = None
+            answered_ids = set()
+            for prev in reversed(valid_messages):
+                if isinstance(prev, ToolMessage):
+                    answered_ids.add(getattr(prev, "tool_call_id", None))
+                elif isinstance(prev, AIMessage):
+                    last_ai = prev
+                    break
+                else:
+                    break
+
+            if last_ai:
+                tool_calls = getattr(last_ai, "tool_calls", []) or []
+                for tc in tool_calls:
+                    tc_id = tc.get("id") if isinstance(tc, dict) else None
+                    if tc_id and tc_id not in answered_ids:
+                        valid_messages.append(
+                            ToolMessage(
+                                content="Tool execution completed.",
+                                tool_call_id=tc_id,
+                            )
+                        )
+            valid_messages.append(msg)
+        else:
+            valid_messages.append(msg)
+
+    return valid_messages, orphaned_ids
 
 def count_message_tokens(messages: List[BaseMessage]) -> int:
     """Estimate token count across a list of messages using metadata or heuristic (~4 chars/token)."""
@@ -61,9 +139,15 @@ async def summarize_node(state: AgentState, config: RunnableConfig | None = None
     if total_tokens <= max_tokens or len(messages) <= keep_last:
         return {}
 
-    # Separate messages: older messages to summarize vs. recent messages to keep verbatim
-    messages_to_summarize = messages[:-keep_last]
-    messages_to_keep = messages[-keep_last:]
+    # Separate messages safely: never split an AIMessage(tool_calls) from its ToolMessages
+    split_idx = max(0, len(messages) - keep_last)
+    while split_idx > 0 and isinstance(messages[split_idx], ToolMessage):
+        split_idx -= 1
+    while split_idx > 0 and isinstance(messages[split_idx], AIMessage) and getattr(messages[split_idx], "tool_calls", None):
+        split_idx -= 1
+
+    messages_to_summarize = messages[:split_idx]
+    messages_to_keep = messages[split_idx:]
 
     if not messages_to_summarize:
         return {}

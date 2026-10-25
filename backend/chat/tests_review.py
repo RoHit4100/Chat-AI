@@ -386,3 +386,59 @@ class RepositoryReviewHardeningTests(TestCase):
         with self.assertRaises(AuthenticationFailed) as ctx:
             authenticate_token(forged_token)
         self.assertIn("signature", str(ctx.exception).lower())
+
+    # ---------------------------------------------------------
+    # 10. Message history sanitization & tool pairing defense
+    # ---------------------------------------------------------
+    def test_sanitize_message_history_repairs_orphaned_tool_message(self):
+        """Orphaned ToolMessage without preceding AIMessage(tool_calls) is converted and marked for cleanup."""
+        from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
+        from agent.memory import sanitize_message_history
+
+        orphaned = ToolMessage(content="Orphaned tool result", tool_call_id="call_orphan_123", id="msg-orphan-1")
+        user_msg = HumanMessage(content="Hello", id="msg-user-1")
+
+        sanitized, orphan_ids = sanitize_message_history([orphaned, user_msg])
+        self.assertEqual(orphan_ids, ["msg-orphan-1"])
+        self.assertEqual(len(sanitized), 2)
+        # First message is converted to passive context, not a raw ToolMessage
+        self.assertIsInstance(sanitized[0], HumanMessage)
+        self.assertIn("Orphaned tool result", sanitized[0].content)
+        self.assertIsInstance(sanitized[1], HumanMessage)
+
+    def test_sanitize_message_history_preserves_valid_tool_pairs(self):
+        """Valid AIMessage(tool_calls) and ToolMessage pairs are preserved intact."""
+        from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
+        from agent.memory import sanitize_message_history
+
+        ai_msg = AIMessage(
+            content="",
+            tool_calls=[{"name": "inspect_file", "args": {"filename": "test.txt"}, "id": "call_123"}],
+            id="msg-ai-1",
+        )
+        tool_msg = ToolMessage(content="File contents", tool_call_id="call_123", id="msg-tool-1")
+        next_ai = AIMessage(content="Here is what I found", id="msg-ai-2")
+
+        sanitized, orphan_ids = sanitize_message_history([ai_msg, tool_msg, next_ai])
+        self.assertEqual(orphan_ids, [])
+        self.assertEqual(len(sanitized), 3)
+        self.assertIsInstance(sanitized[1], ToolMessage)
+        self.assertEqual(sanitized[1].tool_call_id, "call_123")
+
+    def test_sanitize_message_history_synthesizes_missing_tool_responses(self):
+        """Unfulfilled tool calls before a new user turn receive synthesized completion responses."""
+        from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
+        from agent.memory import sanitize_message_history
+
+        ai_msg = AIMessage(
+            content="",
+            tool_calls=[{"name": "search_web", "args": {"query": "test"}, "id": "call_unanswered"}],
+            id="msg-ai-1",
+        )
+        user_msg = HumanMessage(content="Next question", id="msg-user-1")
+
+        sanitized, orphan_ids = sanitize_message_history([ai_msg, user_msg])
+        self.assertEqual(len(sanitized), 3)
+        self.assertIsInstance(sanitized[1], ToolMessage)
+        self.assertEqual(sanitized[1].tool_call_id, "call_unanswered")
+        self.assertIsInstance(sanitized[2], HumanMessage)

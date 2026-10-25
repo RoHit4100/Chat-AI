@@ -1,11 +1,12 @@
 import uuid
 from asgiref.sync import sync_to_async
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, RemoveMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import ToolNode
 from agent.state import AgentState
 from agent.tools import ALL_TOOLS
 from agent.llm import get_llm
+from agent.memory import sanitize_message_history, sanitize_tool_output, summarize_node
 from chat.models import UploadedFile, GeneratedFile
 
 # Pre-built ToolNode with error handling enabled
@@ -81,7 +82,9 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None) ->
         system_text += "\nNotice: 3 consecutive tool failures reached. Explain the failure clearly to the user and do not make further tool calls."
 
     system_message = SystemMessage(content=system_text)
-    messages = [system_message] + state.get("messages", [])
+    raw_messages = state.get("messages", [])
+    sanitized_messages, orphaned_ids = sanitize_message_history(raw_messages)
+    messages = [system_message] + sanitized_messages
 
     llm = get_llm()
     # If 3 tool errors reached, don't bind tools to force explanation
@@ -91,9 +94,8 @@ async def agent_node(state: AgentState, config: RunnableConfig | None = None) ->
         llm_with_tools = llm.bind_tools(ALL_TOOLS)
         response = await llm_with_tools.ainvoke(messages)
 
-    return {"messages": [response]}
-
-from agent.memory import sanitize_tool_output, summarize_node
+    cleanup_ops = [RemoveMessage(id=oid) for oid in orphaned_ids if oid]
+    return {"messages": cleanup_ops + [response]}
 
 async def tools_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
     """Execute tool calls, sanitize tool outputs to prevent large blobs from entering state, and count failures."""
