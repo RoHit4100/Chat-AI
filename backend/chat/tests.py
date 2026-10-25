@@ -305,8 +305,11 @@ class AgentAndStreamingTests(TestCase):
 
         graph = await get_compiled_graph()
         thread_id = "00000000-0000-0000-0000-000000000002"
+        messages = [
+            HumanMessage(content=f"Prior message {i}") for i in range(5)
+        ] + [HumanMessage(content="Explain python generators.")]
         res = await graph.ainvoke(
-            {"messages": [HumanMessage(content="Explain python generators.")]},
+            {"messages": messages},
             config={"configurable": {"thread_id": thread_id}},
         )
 
@@ -520,6 +523,8 @@ class MemoryAndSummarizationTests(TestCase):
             AIMessage(content="Acknowledged alpha discovery.", id="c1_2"),
             HumanMessage(content="Beta testing launched.", id="c1_3"),
             AIMessage(content="Beta testing in progress.", id="c1_4"),
+            HumanMessage(content="QA verification complete.", id="c1_5"),
+            AIMessage(content="Ready for deployment.", id="c1_6"),
         ]
 
         state_1 = {
@@ -535,12 +540,14 @@ class MemoryAndSummarizationTests(TestCase):
         self.assertIn("Initial baseline summary", summary_1)
         self.assertIn("Alpha discovery", summary_1)
 
-        # Compaction 2: Preserved messages from batch 1 (c1_3, c1_4) plus new batch
+        # Compaction 2: Preserved messages from batch 1 (c1_5, c1_6) plus new batch
         batch_2 = [
-            batch_1[2],
-            batch_1[3],
+            batch_1[4],
+            batch_1[5],
             HumanMessage(content="Gamma deployment initiated.", id="c2_1"),
             AIMessage(content="Gamma deployment completed.", id="c2_2"),
+            HumanMessage(content="Delta release launched.", id="c2_3"),
+            AIMessage(content="Delta release confirmed.", id="c2_4"),
         ]
 
         state_2 = {
@@ -555,7 +562,7 @@ class MemoryAndSummarizationTests(TestCase):
 
         # Final summary must retain initial summary and incorporate new older messages
         self.assertIn("Initial baseline summary", summary_2)
-        self.assertIn("Beta testing", summary_2)
+        self.assertIn("QA verification", summary_2)
 
     def test_sanitize_tool_output(self):
         """Sanitizer strips base64 data and truncates oversized tool outputs."""

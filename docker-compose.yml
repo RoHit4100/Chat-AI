@@ -49,10 +49,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_MODEL: ${LLM_MODEL:-gpt-6-luna}
       FAKE_LLM: ${FAKE_LLM:-0}
       MEDIA_ROOT: ${MEDIA_ROOT:-/data}
     volumes:
+      - ./backend:/app
       - media_data:/data
     ports:
       - "8000:8000"

@@ -66,7 +66,7 @@ class DeterministicFakeChatModel(BaseChatModel):
                 "type": "tool_call",
             }]
         if "call tool" in content or "test tool" in content:
-            return "", [{"name": "search_web", "args": {"query": "test query"}, "id": "call_web_0", "type": "tool_call"}]
+            return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
 
         return "This is a deterministic fake response.", None
 

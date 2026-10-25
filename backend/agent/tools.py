@@ -7,7 +7,7 @@ import pandas as pd
 from chat.models import UploadedFile
 from filesvc.storage import storage
 
-MAX_READ_CHUNK = int(os.getenv("MAX_READ_CHUNK", "4000"))
+MAX_READ_CHUNK = int(os.getenv("MAX_READ_CHUNK", "8000"))
 
 def wrap_untrusted_content(content: str, filename: str) -> str:
     """Wrap file content with strict defensive boundaries to neutralize prompt injection."""
@@ -23,11 +23,6 @@ def wrap_untrusted_content(content: str, filename: str) -> str:
     )
 
 @tool
-def search_web(query: str) -> str:
-    """Search the web for up-to-date information on a given topic."""
-    return f"Search results for: {query}. (Simulated placeholder output)"
-
-@tool
 def inspect_file(filename: str) -> str:
     """Inspect and retrieve summary information for an uploaded file."""
     return f"File inspection results for '{filename}': Valid structure, verified content."
@@ -35,15 +30,17 @@ def inspect_file(filename: str) -> str:
 @tool
 def read_file(
     file_id: str,
-    section: str | None = None,
+    page: int | None = None,
+    chunk: int | None = None,
     row_start: int | None = None,
     row_end: int | None = None,
     config: RunnableConfig = None,
 ) -> str:
-    """Read contents of an uploaded file in bounded chunks with defensive boundaries.
-    For spreadsheets, returns schema, row count, and a sample by default, or row ranges on request.
-    For images, returns dimensions and vision model data.
+    """Read contents of an uploaded file by page (1-based) or chunk index (0-based) in bounded size.
+    For spreadsheets, specify row_start and row_end (1-based).
+    For images, returns dimensions and visual payload.
     """
+    import re
     cfg_configurable = (config or {}).get("configurable", {})
     cfg_thread_id = cfg_configurable.get("thread_id")
     cfg_user_id = cfg_configurable.get("user_id")
@@ -66,39 +63,44 @@ def read_file(
 
     # Handle spreadsheets (.xlsx, .xls, .csv)
     if ext in (".xlsx", ".xls", ".csv") or "spreadsheet" in uf.mime:
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(uf.path)
+            else:
+                df = pd.read_excel(uf.path)
+        except Exception as exc:
+            return f"Error reading spreadsheet file: {str(exc)}"
+
+        total_rows = len(df)
         if row_start is not None or row_end is not None:
-            # User requested specific row ranges
-            try:
-                if ext == ".csv":
-                    df = pd.read_csv(uf.path)
-                else:
-                    df = pd.read_excel(uf.path)
+            # Validate row arguments
+            if row_start is not None and (row_start < 1 or row_start > total_rows):
+                return f"Error: Invalid row_start {row_start}. Valid options for '{uf.name}': rows 1 to {total_rows}."
+            if row_end is not None and (row_end < 1 or (row_start and row_end < row_start)):
+                return f"Error: Invalid row_end {row_end}. Valid options for '{uf.name}': rows {row_start or 1} to {total_rows}."
 
-                start_idx = max(0, (row_start or 1) - 1)
-                end_idx = row_end if row_end is not None else (start_idx + 50)
-                sliced = df.iloc[start_idx:end_idx]
+            start_idx = max(0, (row_start or 1) - 1)
+            end_idx = min(total_rows, row_end if row_end is not None else (start_idx + 50))
+            sliced = df.iloc[start_idx:end_idx]
 
-                lines = [
-                    f"Spreadsheet: {uf.name} (Rows {start_idx + 1} to {min(end_idx, len(df))} of {len(df)})",
-                    sliced.to_string(index=True),
-                ]
-                output = "\n".join(lines)
-            except Exception as exc:
-                output = f"Error reading spreadsheet row range: {str(exc)}"
+            output = (
+                f"Spreadsheet: {uf.name} (Rows {start_idx + 1} to {end_idx} of {total_rows})\n"
+                f"{sliced.to_string(index=True)}"
+            )
         else:
             # Default: schema, row count, and sample
             structured = parsed_data.get("structured_data") or {}
-            schema = structured.get("schema", [])
-            row_count = structured.get("row_count", 0)
-            sample = structured.get("sample", [])
+            schema = structured.get("schema", list(df.columns))
+            row_count = structured.get("row_count", total_rows)
+            sample_rows = df.head(10).to_dict(orient="records")
 
             lines = [
                 f"Spreadsheet: {uf.name}",
                 f"Total Rows: {row_count}",
                 f"Schema: {schema}",
-                f"Sample rows (first {len(sample)}):",
+                f"Sample rows (first {len(sample_rows)}):",
             ]
-            for r in sample:
+            for r in sample_rows:
                 lines.append(str(r))
             output = "\n".join(lines)
 
@@ -124,23 +126,47 @@ def read_file(
             except Exception:
                 text_content = "Unable to read raw file."
 
-        if section and text_content:
-            # Search for section identifier (e.g. Page X, Slide Y, or header)
-            lower_content = text_content.lower()
-            target = str(section).lower()
-            idx = lower_content.find(target)
-            if idx != -1:
-                start = max(0, idx - 50)
-                end = min(len(text_content), idx + 2000)
-                output = f"Section '{section}' of {uf.name}:\n" + text_content[start:end]
-            else:
-                output = f"Section '{section}' not found in {uf.name}. Initial content:\n" + text_content[:2000]
-        else:
-            output = text_content or f"File {uf.name} has no extractable text."
+        if not text_content:
+            return wrap_untrusted_content(f"File {uf.name} has no extractable text.", uf.name)
 
-    # Cap output size and say when truncated
-    if len(output) > MAX_READ_CHUNK:
-        output = output[:MAX_READ_CHUNK] + "\n... [output truncated: remaining content omitted for safety]"
+        # Detect discrete pages / slides if present
+        page_splits = re.split(r"(?:^|\n)--- (?:Page|Slide) \d+ ---\n", text_content)
+        pages = [p.strip() for p in page_splits if p.strip()]
+        total_pages = len(pages)
+        total_len = len(text_content)
+        total_chunks = max(1, (total_len + MAX_READ_CHUNK - 1) // MAX_READ_CHUNK)
+
+        # If page index requested
+        if page is not None:
+            if total_pages <= 1 and not ("--- Page " in text_content or "--- Slide " in text_content):
+                return f"Error: Invalid page argument. '{uf.name}' has no page markers. Valid options: chunk 0 to {total_chunks - 1}."
+            if page < 1 or page > total_pages:
+                return f"Error: Invalid page {page}. Valid options for '{uf.name}': page 1 to {total_pages} (or chunk 0 to {total_chunks - 1})."
+            page_text = pages[page - 1]
+            if len(page_text) > MAX_READ_CHUNK:
+                output = page_text[:MAX_READ_CHUNK] + f"\nTruncated: showing chars 0-{MAX_READ_CHUNK} of {len(page_text)}, call read_file with chunk=1 for more"
+            else:
+                output = f"--- Page {page} of {uf.name} ---\n{page_text}"
+
+        # If chunk index requested
+        elif chunk is not None:
+            if chunk < 0 or chunk >= total_chunks:
+                page_opt = f", or page 1 to {total_pages}" if total_pages > 1 else ""
+                return f"Error: Invalid chunk {chunk}. Valid options for '{uf.name}': chunk 0 to {total_chunks - 1}{page_opt}."
+            start_char = chunk * MAX_READ_CHUNK
+            end_char = min(total_len, start_char + MAX_READ_CHUNK)
+            sliced = text_content[start_char:end_char]
+            if end_char < total_len:
+                output = sliced + f"\nTruncated: showing chars {start_char}-{end_char} of {total_len}, call read_file with chunk={chunk + 1} for more"
+            else:
+                output = sliced
+
+        # Default: read from chunk 0 up to MAX_READ_CHUNK
+        else:
+            if total_len > MAX_READ_CHUNK:
+                output = text_content[:MAX_READ_CHUNK] + f"\nTruncated: showing chars 0-{MAX_READ_CHUNK} of {total_len}, call read_file with chunk=1 for more"
+            else:
+                output = text_content
 
     return wrap_untrusted_content(output, uf.name)
 
@@ -268,4 +294,4 @@ def failing_tool(query: str = "fail") -> str:
     raise ValueError(f"Simulated tool error executing query: {query}")
 
 # Registered tools for agent node
-ALL_TOOLS = [search_web, inspect_file, read_file, generate_file, read_generated_spec, failing_tool]
+ALL_TOOLS = [inspect_file, read_file, generate_file, read_generated_spec, failing_tool]

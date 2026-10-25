@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from typing import AsyncIterator
-from langchain_core.messages import HumanMessage, RemoveMessage
+from langchain_core.messages import HumanMessage, RemoveMessage, AIMessageChunk
 from agent.graph import get_compiled_graph
 from chat.models import Thread, Message, GeneratedFile
 
@@ -84,12 +84,17 @@ async def stream_chat_turn(
 
             if mode == "messages":
                 chunk_msg, metadata = data
-                text = getattr(chunk_msg, "content", "")
-                if text:
-                    collected_content += text
-                    yield format_sse("token", {"content": text})
+                node_name = (metadata or {}).get("langgraph_node")
 
-                # Emit status event when model invokes a tool
+                # Strictly emit token events ONLY for AIMessageChunk from the "agent" node
+                # Never stream ToolMessage content or output from summarize node
+                if node_name == "agent" and isinstance(chunk_msg, AIMessageChunk):
+                    text = getattr(chunk_msg, "content", "")
+                    if isinstance(text, str) and text:
+                        collected_content += text
+                        yield format_sse("token", {"content": text})
+
+                # Emit status event when model invokes a tool (never as token)
                 tool_calls = getattr(chunk_msg, "tool_calls", None)
                 if tool_calls:
                     for tc in tool_calls:
@@ -103,7 +108,12 @@ async def stream_chat_turn(
 
             elif mode == "updates":
                 for node_name, updates in data.items():
-                    yield format_sse("status", {"node": node_name, "status": "completed"})
+                    if node_name == "summarize":
+                        yield format_sse("status", {"node": "summarize", "status": "Conversation summary updated"})
+                    elif node_name == "tools":
+                        yield format_sse("status", {"node": "tools", "status": "Tool execution completed"})
+                    else:
+                        yield format_sse("status", {"node": node_name, "status": "completed"})
 
                     # Emit file event when file generation tool completes
                     if node_name == "tools" and isinstance(updates, dict):
@@ -134,12 +144,13 @@ async def stream_chat_turn(
         logger.exception("Streaming execution encountered an error: %s", exc)
         yield format_sse("error", {"error": str(exc)})
     finally:
-        # Calculate tokens from metadata or heuristic fallback
+        # Save only the final assistant text (never tool or summarize outputs)
+        final_text = collected_content.strip()
         final_input_tokens = input_tokens or estimate_tokens(user_prompt or "")
-        final_output_tokens = output_tokens or estimate_tokens(collected_content)
+        final_output_tokens = output_tokens or estimate_tokens(final_text)
 
         if is_regenerate and existing_assistant_message:
-            existing_assistant_message.content = collected_content
+            existing_assistant_message.content = final_text
             existing_assistant_message.status = status
             existing_assistant_message.input_tokens = final_input_tokens
             existing_assistant_message.output_tokens = final_output_tokens
@@ -148,7 +159,7 @@ async def stream_chat_turn(
             await Message.objects.acreate(
                 thread=thread,
                 role="assistant",
-                content=collected_content,
+                content=final_text,
                 status=status,
                 input_tokens=final_input_tokens,
                 output_tokens=final_output_tokens,

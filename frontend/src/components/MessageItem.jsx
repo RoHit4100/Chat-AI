@@ -19,8 +19,11 @@ export function MessageItem({
   const isStopped = message.status === "stopped";
   const isCurrentlyStreaming = isLast && isStreaming && message.role === "assistant";
 
-  const userFiles = message.files || [];
-  const generatedFiles = message.generatedFiles || [];
+  // Only show file chips on the message they were attached to
+  const userFiles = isUser && Array.isArray(message.files)
+    ? message.files.filter((f) => !f.message || String(f.message) === String(message.id))
+    : [];
+  const generatedFiles = !isUser && Array.isArray(message.generatedFiles) ? message.generatedFiles : [];
 
   // Defensively strip any raw untrusted_file_content tags so user never sees corrupted XML wrappers
   const cleanContent = React.useMemo(() => {

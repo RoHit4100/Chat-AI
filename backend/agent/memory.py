@@ -110,10 +110,13 @@ def sanitize_message_history(messages: List[BaseMessage]) -> tuple[List[BaseMess
 
     return valid_messages, orphaned_ids
 
-def count_message_tokens(messages: List[BaseMessage]) -> int:
-    """Estimate token count across a list of messages using metadata or heuristic (~4 chars/token)."""
+def count_conversation_tokens(messages: List[BaseMessage]) -> int:
+    """Count tokens across only user and assistant conversation messages (not file text or tool output)."""
     total = 0
     for m in messages:
+        # Strictly count only HumanMessage and AIMessage conversation messages
+        if not isinstance(m, (HumanMessage, AIMessage)):
+            continue
         usage = getattr(m, "usage_metadata", None)
         if usage and "total_tokens" in usage:
             total += usage["total_tokens"]
@@ -124,8 +127,10 @@ def count_message_tokens(messages: List[BaseMessage]) -> int:
             total += max(1, len(text) // 4) + 4
     return total
 
+count_message_tokens = count_conversation_tokens
+
 async def summarize_node(state: AgentState, config: RunnableConfig | None = None) -> dict:
-    """Summarize older messages when total tokens exceed MAX_TOKENS, keeping KEEP_LAST messages verbatim."""
+    """Summarize older messages when total conversation tokens exceed MAX_TOKENS (default 6000)."""
     max_tokens = int(os.getenv("MAX_TOKENS", "6000"))
     keep_last = int(os.getenv("KEEP_LAST", "8"))
 
@@ -133,10 +138,12 @@ async def summarize_node(state: AgentState, config: RunnableConfig | None = None
     if not messages:
         return {}
 
-    total_tokens = count_message_tokens(messages)
+    # Count only user and assistant conversation messages
+    conversation_msgs = [m for m in messages if isinstance(m, (HumanMessage, AIMessage))]
+    total_tokens = count_conversation_tokens(messages)
 
-    # If within threshold or fewer messages than KEEP_LAST, no compaction needed
-    if total_tokens <= max_tokens or len(messages) <= keep_last:
+    # If within threshold or 5 or fewer conversation messages, no compaction needed
+    if total_tokens <= max_tokens or len(conversation_msgs) <= 5 or len(messages) <= keep_last:
         return {}
 
     # Separate messages safely: never split an AIMessage(tool_calls) from its ToolMessages

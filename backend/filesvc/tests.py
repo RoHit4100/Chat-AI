@@ -368,7 +368,7 @@ class FileServiceTests(TransactionTestCase):
         uf_large.refresh_from_db()
 
         res_large = read_file.invoke({"file_id": str(uf_large.id)}, config=config_user1)
-        self.assertIn("... [output truncated: remaining content omitted for safety]", res_large)
+        self.assertIn("Truncated: showing chars 0-8000 of", res_large)
 
         # 5. Cross-user verification
         config_user2 = {"configurable": {"thread_id": str(self.thread2.id), "user_id": str(self.user2.id)}}
