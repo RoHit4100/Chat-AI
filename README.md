@@ -117,6 +117,7 @@ flowchart TB
 | `DEBUG` | `1` | Enable Django debug mode (`0` in production) |
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | Comma-separated list of permitted host headers |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Permitted cross-origin resource sharing origins |
+| `BACKEND_URL` | `http://backend:8000` | Internal backend service URL used by the frontend container proxy |
 | `KEYCLOAK_ADMIN` | `admin` | Keycloak administrative console username |
 | `KEYCLOAK_ADMIN_PASSWORD` | `admin1234` | Keycloak administrative console password |
 | `KEYCLOAK_PUBLIC_URL` | `http://localhost:8080/realms/chat` | Keycloak public URL accessible from the browser for OIDC tokens |

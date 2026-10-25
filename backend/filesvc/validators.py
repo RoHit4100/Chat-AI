@@ -52,7 +52,7 @@ ALLOWED_EXTENSIONS = {
     ".html": {"text/html", "text/plain"},
     ".css": {"text/css", "text/plain"},
     ".json": {"application/json", "text/plain"},
-    ".zip": {"application/zip", "application/x-zip-compressed"},
+    ".zip": {"application/zip", "application/x-zip-compressed", "application/x-zip", "application/octet-stream"},
     ".yaml": {"text/plain", "text/yaml", "application/x-yaml"},
     ".yml": {"text/plain", "text/yaml", "application/x-yaml"},
     ".sh": {"text/plain", "text/x-shellscript"},

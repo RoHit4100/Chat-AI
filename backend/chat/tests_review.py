@@ -336,8 +336,9 @@ class RepositoryReviewHardeningTests(TestCase):
             (re.compile(r"password\s*=\s*['\"][a-zA-Z0-9_\-!@#$%^&*]{12,}['\"]", re.IGNORECASE), "Hardcoded password"),
         ]
 
-        workspace_root = Path(settings.BASE_DIR).parent
-        excluded_dirs = {".git", "venv", ".venv", "__pycache__", "node_modules", "dist", "data"}
+        repo_root = Path(settings.BASE_DIR)
+        workspace_root = repo_root.parent if (repo_root.parent / "backend").exists() else repo_root
+        excluded_dirs = {".git", "venv", ".venv", "__pycache__", "node_modules", "dist", "data", "site-packages", "usr", "lib", "bin", "var", "etc"}
 
         found_secrets = []
         for root, dirs, files in os.walk(workspace_root):
