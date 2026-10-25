@@ -40,7 +40,9 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "config.middleware.RequestLoggingMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
+    # CsrfViewMiddleware omitted: all API routes use Bearer JWT, not cookies.
+    # Django CSRF is irrelevant for token-authenticated APIs and causes 403s
+    # on cross-origin POST/PUT requests from the SPA.
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -132,6 +134,12 @@ REST_FRAMEWORK = {
 cors_origins_str = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
+
+# Trust the same origins for any remaining Django CSRF checks (e.g. admin).
+# The API itself is JWT-only and has no CsrfViewMiddleware.
+CORE_TRUSTED = ["http://localhost:3000", "http://127.0.0.1:3000"]
+extra_trusted = os.getenv("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = CORE_TRUSTED + [o.strip() for o in extra_trusted.split(",") if o.strip()]
 
 # Keycloak OpenID Connect endpoints and client ID
 KEYCLOAK_INTERNAL_URL = os.getenv(

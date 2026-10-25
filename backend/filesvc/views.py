@@ -2,6 +2,8 @@ import os
 from urllib.parse import quote
 from django.db import connection
 from django.http import FileResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
@@ -20,6 +22,7 @@ from filesvc.validators import (
     is_dangerous_inline_file,
 )
 
+@method_decorator(csrf_exempt, name="dispatch")
 class ThreadFilesView(APIView):
     """List or upload files associated with a specific thread."""
     parser_classes = [MultiPartParser, FormParser]
@@ -99,6 +102,7 @@ class ThreadFilesView(APIView):
 
         return Response(UploadedFileSerializer(uploaded_records, many=True).data, status=status.HTTP_201_CREATED)
 
+@method_decorator(csrf_exempt, name="dispatch")
 class ThreadGeneratedFilesView(APIView):
     """List all generated files belonging to a specific thread."""
     permission_classes = [permissions.IsAuthenticated]
@@ -114,6 +118,7 @@ class ThreadGeneratedFilesView(APIView):
         files = thread.generated_files.all()
         return Response(GeneratedFileSerializer(files, many=True).data)
 
+@method_decorator(csrf_exempt, name="dispatch")
 class FileDownloadView(APIView):
     """Authenticated endpoint to download uploaded files with security headers."""
     permission_classes = [permissions.IsAuthenticated]
@@ -142,6 +147,7 @@ class FileDownloadView(APIView):
         response["Content-Disposition"] = f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
         return response
 
+@method_decorator(csrf_exempt, name="dispatch")
 class GeneratedFileDownloadView(APIView):
     """Authenticated endpoint to download generated files with security headers."""
     permission_classes = [permissions.IsAuthenticated]

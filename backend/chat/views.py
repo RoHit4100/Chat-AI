@@ -1,6 +1,8 @@
 import json
 import os
 from django.http import HttpResponse, StreamingHttpResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -12,6 +14,7 @@ from chat.serializers import ThreadSerializer, MessageSerializer, UserSerializer
 from chat.streaming import acquire_stream_lock, release_stream_lock, stream_chat_turn
 from filesvc.throttles import ChatRateThrottle
 
+@method_decorator(csrf_exempt, name="dispatch")
 class MeView(APIView):
     """Return profile details for the currently authenticated user."""
     permission_classes = [permissions.IsAuthenticated]
@@ -20,6 +23,7 @@ class MeView(APIView):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
+@method_decorator(csrf_exempt, name="dispatch")
 class ThreadViewSet(viewsets.ModelViewSet):
     """CRUD operations on conversation threads, strictly scoped to request.user."""
     serializer_class = ThreadSerializer
@@ -78,6 +82,7 @@ async def _authenticate_async_request(request):
     except Exception:
         return None
 
+@csrf_exempt
 async def stream_thread_view(request, id):
     """Async SSE streaming view for thread conversations."""
     if request.method != "POST":
@@ -156,6 +161,7 @@ async def stream_thread_view(request, id):
     response["X-Accel-Buffering"] = "no"
     return response
 
+@csrf_exempt
 async def regenerate_thread_view(request, id):
     """Async endpoint to prune last assistant turn from checkpoint and re-run from last user message."""
     if request.method != "POST":
