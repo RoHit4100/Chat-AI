@@ -164,8 +164,10 @@ def get_llm():
     elif provider in ("google", "google_genai"):
         api_key = os.getenv("GOOGLE_API_KEY")
 
-    kwargs = {}
-    if api_key:
-        kwargs["api_key"] = api_key
+    if not api_key:
+        raise ValueError(
+            f"Missing credentials for {provider}. Set {provider.upper()}_API_KEY in your .env file, or set FAKE_LLM=1 for local development without an external API key."
+        )
 
+    kwargs = {"api_key": api_key}
     return langchain_init_chat_model(model=model, model_provider=provider, **kwargs)

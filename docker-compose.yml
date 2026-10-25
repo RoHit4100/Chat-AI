@@ -33,6 +33,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    env_file:
+      - .env
     command: sh -c "python manage.py migrate && uvicorn config.asgi:application --host 0.0.0.0 --port 8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-aichat}
@@ -43,6 +45,15 @@ services:
       KEYCLOAK_INTERNAL_URL: ${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080/realms/chat/protocol/openid-connect/certs}
       KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/realms/chat}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-chat-web}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      FAKE_LLM: ${FAKE_LLM:-0}
+      MEDIA_ROOT: ${MEDIA_ROOT:-/data}
+    volumes:
+      - media_data:/data
     ports:
       - "8000:8000"
     depends_on:
@@ -65,3 +76,4 @@ services:
 
 volumes:
   postgres_data:
+  media_data:
