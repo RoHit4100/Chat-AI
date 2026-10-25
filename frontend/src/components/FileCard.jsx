@@ -51,7 +51,7 @@ function parseCsvRows(text, maxRows = 15) {
   return { headers, rows, totalLines: lines.length - 1 };
 }
 
-export function FileCard({ file }) {
+export function FileCard({ file, isStreaming = false }) {
   const { id, name, kind, version = 1, download_url, parent, spec } = file;
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState(null);
@@ -60,6 +60,7 @@ export function FileCard({ file }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
+  const isReady = Boolean(download_url) && !isStreaming;
   const IconComponent = getFileIcon(name);
 
   // Authenticated blob download: Bearer token is strictly in header, NEVER in query string URL
@@ -310,7 +311,14 @@ export function FileCard({ file }) {
             type="button"
             className={`file-card-btn preview-toggle-btn ${showPreview ? "active" : ""}`}
             onClick={() => setShowPreview((prev) => !prev)}
-            title={showPreview ? "Hide preview" : "View inline preview"}
+            disabled={!isReady}
+            title={
+              !isReady
+                ? "Preview available once generation finishes"
+                : showPreview
+                ? "Hide preview"
+                : "View inline preview"
+            }
           >
             {showPreview ? <EyeOff size={14} /> : <Eye size={14} />}
             <span>{showPreview ? "Hide" : "Preview"}</span>
@@ -320,13 +328,29 @@ export function FileCard({ file }) {
             type="button"
             className={`file-card-btn download-btn ${downloadSuccess ? "success" : ""}`}
             onClick={handleDownload}
-            disabled={isDownloading}
-            title="Download file securely via Bearer token"
+            disabled={!isReady || isDownloading}
+            title={
+              isStreaming
+                ? "Download available once generation finishes"
+                : !download_url
+                ? "Preparing download link..."
+                : "Download file securely via Bearer token"
+            }
           >
             {isDownloading ? (
               <>
                 <Loader2 size={14} className="spin-icon" />
                 <span>Downloading...</span>
+              </>
+            ) : isStreaming ? (
+              <>
+                <Loader2 size={14} className="spin-icon" />
+                <span>Generating...</span>
+              </>
+            ) : !download_url ? (
+              <>
+                <Loader2 size={14} className="spin-icon" />
+                <span>Preparing...</span>
               </>
             ) : downloadSuccess ? (
               <>

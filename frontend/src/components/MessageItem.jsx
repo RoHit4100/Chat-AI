@@ -22,6 +22,15 @@ export function MessageItem({
   const userFiles = message.files || [];
   const generatedFiles = message.generatedFiles || [];
 
+  // Defensively strip any raw untrusted_file_content tags so user never sees corrupted XML wrappers
+  const cleanContent = React.useMemo(() => {
+    const raw = message.content || "";
+    if (isUser || !raw.includes("<untrusted_file_content")) return raw;
+    let cleaned = raw.replace(/<untrusted_file_content[\s\S]*?<\/untrusted_file_content>\s*/gi, "").trim();
+    cleaned = cleaned.replace(/<untrusted_file_content[\s\S]*$/gi, "").trim();
+    return cleaned || raw;
+  }, [message.content, isUser]);
+
   return (
     <div className={`message-row ${message.role}`}>
       {!isUser && (
@@ -62,13 +71,17 @@ export function MessageItem({
                 },
               }}
             >
-              {message.content}
+              {cleanContent}
             </ReactMarkdown>
 
             {generatedFiles.length > 0 && (
               <div className="message-generated-files">
                 {generatedFiles.map((gf) => (
-                  <FileCard key={gf.id || gf.name} file={gf} />
+                  <FileCard
+                    key={gf.id || gf.name}
+                    file={gf}
+                    isStreaming={isCurrentlyStreaming}
+                  />
                 ))}
               </div>
             )}
