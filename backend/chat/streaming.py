@@ -104,10 +104,6 @@ async def stream_chat_turn(
             elif mode == "updates":
                 for node_name, updates in data.items():
                     yield format_sse("status", {"node": node_name, "status": "completed"})
-                    # Emit file manifest notifications
-                    if node_name == "prepare" and isinstance(updates, dict) and "manifest" in updates:
-                        for item in updates.get("manifest", []):
-                            yield format_sse("file", item)
 
                     # Emit file event when file generation tool completes
                     if node_name == "tools" and isinstance(updates, dict):

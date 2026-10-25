@@ -85,6 +85,11 @@ export function useChatStream(threadId, onTitleGenerated) {
               setStatusText(formatStatus(parsedData.node));
             }
           } else if (eventName === "file") {
+            // Only process valid generated file events with a download_url
+            if (!parsedData || !parsedData.download_url || parsedData.kind === "uploaded") {
+              continue;
+            }
+
             setActiveFiles((prev) => {
               const existingIdx = prev.findIndex(
                 (f) => f.name?.toLowerCase() === parsedData.name?.toLowerCase()

@@ -75,12 +75,14 @@ export default function App() {
       if (msgs.length > 0 && genFiles.length > 0) {
         // Map to latest version per file name so revised files update to latest version
         const latestGenMap = new Map();
-        genFiles.forEach((gf) => {
-          const key = (gf.name || "").toLowerCase();
-          if (!latestGenMap.has(key) || (latestGenMap.get(key).version || 0) < (gf.version || 0)) {
-            latestGenMap.set(key, gf);
-          }
-        });
+        genFiles
+          .filter((gf) => gf.kind !== "uploaded" && gf.download_url)
+          .forEach((gf) => {
+            const key = (gf.name || "").toLowerCase();
+            if (!latestGenMap.has(key) || (latestGenMap.get(key).version || 0) < (gf.version || 0)) {
+              latestGenMap.set(key, gf);
+            }
+          });
         const distinctGenFiles = Array.from(latestGenMap.values());
 
         // Attach distinct latest generated files to the last assistant message
