@@ -23,9 +23,37 @@ def wrap_untrusted_content(content: str, filename: str) -> str:
     )
 
 @tool
-def inspect_file(filename: str) -> str:
-    """Inspect and retrieve summary information for an uploaded file."""
-    return f"File inspection results for '{filename}': Valid structure, verified content."
+def inspect_file(file_id: str, config: RunnableConfig = None) -> str:
+    """Inspect and retrieve summary information and metadata for an uploaded file."""
+    cfg_configurable = (config or {}).get("configurable", {})
+    cfg_thread_id = cfg_configurable.get("thread_id")
+    cfg_user_id = cfg_configurable.get("user_id")
+
+    query = UploadedFile.objects.select_related("thread")
+    if cfg_thread_id:
+        query = query.filter(thread_id=cfg_thread_id)
+    if cfg_user_id:
+        query = query.filter(thread__user_id=cfg_user_id)
+
+    file_id_str = str(file_id).strip()
+    uf = None
+    if file_id_str.isdigit():
+        uf = query.filter(id=int(file_id_str)).first()
+    if not uf:
+        uf = query.filter(name__iexact=file_id_str).first()
+    if not uf:
+        uf = query.filter(name__icontains=Path(file_id_str).name).first()
+
+    if not uf:
+        return "Error: File not found or access denied."
+
+    parsed_data = storage.read_parsed(uf.parsed_path) if uf.parsed_path else {}
+    return (
+        f"File '{uf.name}' (id: {uf.id}):\n"
+        f"MIME: {uf.mime}, Size: {uf.size} bytes, Status: {uf.status}\n"
+        f"Summary: {uf.summary or 'None'}\n"
+        f"Metadata: {parsed_data.get('metadata', {})}"
+    )
 
 @tool
 def read_file(
@@ -36,7 +64,7 @@ def read_file(
     row_end: int | None = None,
     config: RunnableConfig = None,
 ) -> str:
-    """Read contents of an uploaded file by page (1-based) or chunk index (0-based) in bounded size.
+    """Read contents of an uploaded file by file_id (or filename from manifest) by page (1-based) or chunk index (0-based) in bounded size.
     For spreadsheets, specify row_start and row_end (1-based).
     For images, returns dimensions and visual payload.
     """
@@ -52,9 +80,16 @@ def read_file(
     if cfg_user_id:
         query = query.filter(thread__user_id=cfg_user_id)
 
-    try:
-        uf = query.get(id=file_id)
-    except (UploadedFile.DoesNotExist, ValueError):
+    file_id_str = str(file_id).strip()
+    uf = None
+    if file_id_str.isdigit():
+        uf = query.filter(id=int(file_id_str)).first()
+    if not uf:
+        uf = query.filter(name__iexact=file_id_str).first()
+    if not uf:
+        uf = query.filter(name__icontains=Path(file_id_str).name).first()
+
+    if not uf:
         return "Error: File not found or access denied."
 
     # Read parsed metadata if available

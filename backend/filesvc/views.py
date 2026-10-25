@@ -34,6 +34,8 @@ class ThreadFilesView(APIView):
         thread = Thread.objects.filter(id=thread_id, user=request.user).first()
         if not thread:
             return Response({"detail": "Thread not found."}, status=status.HTTP_404_NOT_FOUND)
+        files = thread.uploaded_files.all()
+        return Response(UploadedFileSerializer(files, many=True).data)
 
     def post(self, request, thread_id):
         """Upload one or many files to a thread, validating limits and running threadpool parsers."""

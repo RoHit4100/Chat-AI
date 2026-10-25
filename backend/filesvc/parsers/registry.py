@@ -22,7 +22,7 @@ PARSER_MAP: dict[str, type[BaseParser]] = {
     ".gif": ImageParser,
     ".webp": ImageParser,
     ".bmp": ImageParser,
-    ".svg": ImageParser,
+    ".svg": TextCodeParser,
     ".json": JsonParser,
     ".zip": ZipParser,
     ".txt": TextCodeParser,

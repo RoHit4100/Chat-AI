@@ -13,19 +13,30 @@ class PdfParser(BaseParser):
         for i, page in enumerate(reader.pages):
             txt = (page.extract_text() or "").strip()
 
-            # If page has little or no text (< 50 chars) but contains images, run OCR on images
-            if len(txt) < 50 and len(page.images) > 0:
+            # If page has little or no text (< 50 chars), rasterize via pdf2image or inspect images for OCR
+            if len(txt) < 50:
                 ocr_pieces = []
-                for img in page.images:
-                    try:
-                        import pytesseract
-                        from PIL import Image as PILImage
-                        pil_img = PILImage.open(io.BytesIO(img.data))
-                        ocr_res = pytesseract.image_to_string(pil_img).strip()
+                # Try full-page rasterization using pdf2image and poppler
+                try:
+                    from pdf2image import convert_from_path
+                    import pytesseract
+                    raster_images = convert_from_path(file_path, first_page=i + 1, last_page=i + 1)
+                    for r_img in raster_images:
+                        ocr_res = pytesseract.image_to_string(r_img).strip()
                         if ocr_res:
                             ocr_pieces.append(ocr_res)
-                    except Exception:
-                        pass
+                except Exception:
+                    # Fallback to embedded image extraction
+                    for img in getattr(page, "images", []):
+                        try:
+                            import pytesseract
+                            from PIL import Image as PILImage
+                            pil_img = PILImage.open(io.BytesIO(img.data))
+                            ocr_res = pytesseract.image_to_string(pil_img).strip()
+                            if ocr_res:
+                                ocr_pieces.append(ocr_res)
+                        except Exception:
+                            pass
                 if ocr_pieces:
                     ocr_text = "\n".join(ocr_pieces)
                     txt = f"{txt}\n{ocr_text}".strip() if txt else ocr_text

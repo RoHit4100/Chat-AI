@@ -17,8 +17,11 @@ from agent.llm import get_llm
 BASE64_IMAGE_PATTERN = re.compile(r"data:image\/[a-zA-Z0-9.-]+;base64,[A-Za-z0-9+/=]+", re.IGNORECASE)
 LARGE_BLOB_PATTERN = re.compile(r"[A-Za-z0-9+/=]{300,}")
 
-def sanitize_tool_output(content: str, max_chars: int = 2000) -> str:
-    """Never store base64 images, full file text or large tool outputs in graph state; truncate before entering state."""
+def sanitize_tool_output(content: str, max_chars: int | None = None) -> str:
+    """Never store base64 images or excessive raw binary in graph state; truncate before entering state."""
+    if max_chars is None:
+        max_chars = int(os.getenv("MAX_TOOL_CHARS", "20000"))
+
     if not isinstance(content, str):
         content = str(content)
 
@@ -28,9 +31,9 @@ def sanitize_tool_output(content: str, max_chars: int = 2000) -> str:
     # Strip raw large base64 or binary text blobs
     content = LARGE_BLOB_PATTERN.sub("[large raw data omitted]", content)
 
-    # Truncate tool output length
+    # Truncate tool output length with clear note
     if len(content) > max_chars:
-        content = content[:max_chars] + "\n... [tool output truncated]"
+        content = content[:max(0, max_chars - 30)] + "\n... [tool output truncated] (call again with chunk=N for more)"
 
     return content
 

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from typing import AsyncIterator, Any
 from langchain_core.messages import HumanMessage, RemoveMessage, AIMessage, AIMessageChunk
@@ -61,7 +62,11 @@ async def stream_chat_turn(
 ) -> AsyncIterator[str]:
     """Execute LangGraph astream and emit SSE events, persisting the result in finally."""
     thread_id = str(thread.id)
-    config = {"configurable": {"thread_id": thread_id, "user_id": str(thread.user_id)}}
+    recursion_limit = int(os.getenv("GRAPH_RECURSION_LIMIT", "25"))
+    config = {
+        "configurable": {"thread_id": thread_id, "user_id": str(thread.user_id)},
+        "recursion_limit": recursion_limit,
+    }
     graph = await get_compiled_graph()
 
     collected_content = ""

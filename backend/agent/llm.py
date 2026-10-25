@@ -52,9 +52,48 @@ class DeterministicFakeChatModel(BaseChatModel):
 
         # Check user message text
         content = str(getattr(last_msg, "content", "")).lower()
-        if "fail tool" in content or "error tool" in content:
+        if "call tool" in content or "test tool" in content:
+            return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
+
+        if "fail" in content or "error" in content:
             return "", [{"name": "failing_tool", "args": {"query": "fail"}, "id": "call_err_0", "type": "tool_call"}]
-        if "generate" in content or "create file" in content:
+
+        if "revise" in content or "based_on" in content or "add a column" in content:
+            return "", [{
+                "name": "generate_file",
+                "args": {
+                    "kind": "xlsx",
+                    "name": "metrics.xlsx",
+                    "based_on": "1",
+                    "spec": {"headers": ["Month", "Users", "Churn"], "rows": [["Jan", 100, 5], ["Feb", 200, 8]]},
+                },
+                "id": "call_rev_0",
+                "type": "tool_call",
+            }]
+
+        if "generate" in content or "create" in content:
+            for k in ["docx", "pdf", "xlsx", "csv", "pptx", "png", "code", "md"]:
+                if k in content or (k == "png" and "chart" in content) or (k == "code" and "python" in content):
+                    spec_map = {
+                        "md": {"title": "Doc", "content": "Sample markdown content"},
+                        "csv": {"headers": ["A", "B"], "rows": [[1, 2]]},
+                        "docx": {"title": "Docx Report", "paragraphs": ["Sample paragraph"]},
+                        "pdf": {"title": "Pdf Doc", "paragraphs": ["Sample paragraph"]},
+                        "xlsx": {"headers": ["Col1"], "rows": [["Val1"]]},
+                        "pptx": {"title": "Presentation", "slides": [{"title": "Slide 1", "content": "Bullets"}]},
+                        "png": {"chart_type": "bar", "labels": ["X"], "values": [10]},
+                        "code": {"language": "python", "code": "def solve(): return 42"},
+                    }
+                    return "", [{
+                        "name": "generate_file",
+                        "args": {
+                            "kind": k,
+                            "name": f"test.{k if k != 'png' else 'png'}",
+                            "spec": spec_map[k],
+                        },
+                        "id": f"call_gen_{k}",
+                        "type": "tool_call",
+                    }]
             return "", [{
                 "name": "generate_file",
                 "args": {
@@ -65,8 +104,9 @@ class DeterministicFakeChatModel(BaseChatModel):
                 "id": "call_gen_0",
                 "type": "tool_call",
             }]
-        if "call tool" in content or "test tool" in content:
-            return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
+
+        if "read" in content or "what " in content or "uploaded" in content:
+            return "", [{"name": "read_file", "args": {"file_id": "1"}, "id": "call_read_0", "type": "tool_call"}]
 
         return "This is a deterministic fake response.", None
 
@@ -169,5 +209,6 @@ def get_llm():
             f"Missing credentials for {provider}. Set {provider.upper()}_API_KEY in your .env file, or set FAKE_LLM=1 for local development without an external API key."
         )
 
-    kwargs = {"api_key": api_key}
+    max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS", "4096"))
+    kwargs = {"api_key": api_key, "max_tokens": max_output_tokens}
     return langchain_init_chat_model(model=model, model_provider=provider, **kwargs)
