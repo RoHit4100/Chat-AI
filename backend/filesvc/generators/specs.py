@@ -118,27 +118,45 @@ class DocumentSpec(BaseModel):
             raise ValueError("Document spec must contain a 'title' or at least one 'sections', 'paragraphs', or 'tables' item.")
         return self
 
+class TotalRowSpec(BaseModel):
+    """Specification for total row summing columns."""
+    label: str = Field(default="Total", description="Label for total row, e.g. 'Total'")
+    columns: List[str] = Field(default_factory=list, description="Column names to sum, e.g. ['Revenue (INR)']")
+
+class ComputedColumnSpec(BaseModel):
+    """Specification for computed columns such as percentage change."""
+    header: str = Field(description="Header name for the computed column, e.g. 'MoM growth %'")
+    kind: str = Field(default="pct_change", description="Computation kind: 'pct_change'")
+    source: str = Field(description="Source column name to compute from, e.g. 'Revenue (INR)'")
+
 class CellSpec(BaseModel):
-    """Specification for an individual spreadsheet cell with typed formatting and optional formula."""
+    """Specification for an individual spreadsheet cell with typed formatting."""
     value: Optional[Any] = Field(default=None, description="Computed scalar value (e.g. numeric total, percentage, string)")
     number_format: Optional[str] = Field(default=None, description="Format string, e.g. '#,##0' for currency/counts, '0.0%' for percentages")
     bold: Optional[bool] = Field(default=False, description="Whether cell text is bold")
-    formula: Optional[str] = Field(default=None, description="Optional Excel formula string, e.g. '=SUM(B2:B13)'")
+    formula: Optional[str] = Field(default=None, description="Forbidden in new specs")
 
     @model_validator(mode="before")
     @classmethod
     def normalize_cell(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            if isinstance(data, str) and data.startswith("="):
-                return {"formula": data, "value": None}
-            return {"value": data}
-        return data
+        if isinstance(data, str) and data.strip().startswith("="):
+            raise ValueError("Formulas starting with '=' are forbidden. Use 'total_row' and 'computed_columns' instead.")
+        if isinstance(data, dict):
+            if data.get("formula") and str(data["formula"]).strip().startswith("="):
+                raise ValueError("Formulas starting with '=' are forbidden. Use 'total_row' and 'computed_columns' instead.")
+            val = data.get("value")
+            if isinstance(val, str) and val.strip().startswith("="):
+                raise ValueError("Formulas starting with '=' are forbidden. Use 'total_row' and 'computed_columns' instead.")
+            return data
+        return {"value": data}
 
 class SheetSpec(BaseModel):
     """Specification for a single sheet in an Excel workbook."""
     name: Optional[str] = Field(default="Sheet1")
     headers: Optional[List[str]] = Field(default_factory=list)
     rows: Optional[List[List[Union[CellSpec, Any]]]] = Field(default_factory=list)
+    total_row: Optional[Union[TotalRowSpec, Dict[str, Any]]] = None
+    computed_columns: Optional[List[Union[ComputedColumnSpec, Dict[str, Any]]]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -170,6 +188,8 @@ class SpreadsheetSpec(BaseModel):
     headers: Optional[List[str]] = Field(default_factory=list)
     rows: Optional[List[List[Union[CellSpec, Any]]]] = Field(default_factory=list)
     sheets: Optional[List[SheetSpec]] = Field(default_factory=list)
+    total_row: Optional[Union[TotalRowSpec, Dict[str, Any]]] = None
+    computed_columns: Optional[List[Union[ComputedColumnSpec, Dict[str, Any]]]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -289,11 +309,27 @@ SPEC_MODELS: Dict[str, type[BaseModel]] = {
     "sql": CodeSpec,
 }
 
+def _check_forbidden_formulas(obj: Any):
+    if isinstance(obj, str):
+        if obj.strip().startswith("="):
+            raise ValueError("Formulas starting with '=' are forbidden. Use 'total_row' and 'computed_columns' instead.")
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "formula" and v:
+                raise ValueError("Formulas starting with '=' are forbidden. Use 'total_row' and 'computed_columns' instead.")
+            _check_forbidden_formulas(v)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            _check_forbidden_formulas(item)
+
 def validate_spec_for_kind(kind: str, spec: dict) -> dict:
     """Validate a raw spec dict against its corresponding Pydantic model.
     Raises ValueError with formatted, actionable error descriptions on failure.
     """
     clean_kind = (kind or "").strip().lower().lstrip(".")
+    if clean_kind in ("xlsx", "xls", "csv"):
+        _check_forbidden_formulas(spec)
+
     model_cls = SPEC_MODELS.get(clean_kind)
     if not model_cls:
         return spec
@@ -303,3 +339,4 @@ def validate_spec_for_kind(kind: str, spec: dict) -> dict:
         return validated.model_dump(exclude_unset=False)
     except Exception as exc:
         raise ValueError(f"Spec validation failed for '{kind}': {str(exc)}")
+

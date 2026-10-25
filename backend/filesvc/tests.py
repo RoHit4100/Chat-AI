@@ -654,44 +654,109 @@ class FileServiceTests(TransactionTestCase):
         self.assertIsNotNone(gf)
         self.assertEqual(gf.version, 1)
 
-    def test_xlsx_generation_and_openpyxl_cached_values(self):
-        """XLSX generator writes computed values and number formats so openpyxl data_only=True reads them."""
+    def test_xlsx_total_is_18585000_and_includes_january(self):
+        """Total is 18585000 and includes January (row 2), not skipping it."""
         import openpyxl
         import tempfile
         from filesvc.generators.registry import get_generator
 
         gen = get_generator("xlsx")
         with tempfile.TemporaryDirectory() as tmp_dir:
-            out_path = os.path.join(tmp_dir, "test_cached_calc.xlsx")
+            out_path = os.path.join(tmp_dir, "revenue_total.xlsx")
             spec = {
-                "headers": ["Month", "Revenue (INR)", "MoM Growth"],
+                "headers": ["Month", "Revenue (INR)"],
                 "rows": [
-                    ["Jan", {"value": 1000, "number_format": "#,##0"}, ""],
-                    ["Feb", {"value": 1500, "number_format": "#,##0"}, {"value": 0.5, "number_format": "0.0%"}],
-                    ["Total", {"value": 2500, "formula": "=SUM(B2:B3)", "bold": True, "number_format": "#,##0"}, ""],
+                    ["Jan", 1240000],
+                    ["Feb", 1085000],
+                    ["Mar", 1310000],
+                    ["Apr", 1425000],
+                    ["May", 1390000],
+                    ["Jun", 1520000],
+                    ["Jul", 1610000],
+                    ["Aug", 1785000],
+                    ["Sep", 1695000],
+                    ["Oct", 1840000],
+                    ["Nov", 1925000],
+                    ["Dec", 1760000],
                 ],
+                "total_row": {"label": "Total", "columns": ["Revenue (INR)"]},
             }
             gen.generate(spec, out_path)
 
-            # Verify with openpyxl data_only=True
-            wb_cached = openpyxl.load_workbook(out_path, data_only=True)
-            sheet = wb_cached.active
-            self.assertEqual(sheet.max_row, 4)
-            self.assertEqual(sheet.max_column, 3)
+            wb = openpyxl.load_workbook(out_path, data_only=True)
+            ws = wb.active
+            self.assertEqual(ws.max_row, 14)  # 1 header + 12 data rows + 1 total row
 
-            # Check total cell (B4) has cached value 2500 and is not None
-            tot_val = sheet.cell(4, 2).value
-            self.assertEqual(tot_val, 2500)
+            # Row 2 must be January with 1240000
+            self.assertEqual(ws.cell(2, 1).value, "Jan")
+            self.assertEqual(ws.cell(2, 2).value, 1240000)
 
-            # Check first period growth (C2) is None or empty string
-            self.assertIn(sheet.cell(2, 3).value, (None, ""))
+            # Row 14 is Total row with sum 18585000 (includes January)
+            self.assertEqual(ws.cell(14, 1).value, "Total")
+            self.assertEqual(ws.cell(14, 2).value, 18585000)
 
-            # Check total row growth (C4) is None or empty string
-            self.assertIn(sheet.cell(4, 3).value, (None, ""))
+    def test_xlsx_growth_shows_feb_and_mar(self):
+        """Growth column shows Jan blank, Feb -12.5%, Mar ~20.7%, and Total blank."""
+        import openpyxl
+        import tempfile
+        from filesvc.generators.registry import get_generator
+
+        gen = get_generator("xlsx")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_path = os.path.join(tmp_dir, "revenue_growth.xlsx")
+            spec = {
+                "headers": ["Month", "Revenue (INR)"],
+                "rows": [
+                    ["Jan", 1240000],
+                    ["Feb", 1085000],
+                    ["Mar", 1310000],
+                ],
+                "total_row": {"label": "Total", "columns": ["Revenue (INR)"]},
+                "computed_columns": [{"header": "MoM growth %", "kind": "pct_change", "source": "Revenue (INR)"}],
+            }
+            gen.generate(spec, out_path)
+
+            wb = openpyxl.load_workbook(out_path, data_only=True)
+            ws = wb.active
+
+            # Row 2 (Jan): growth is blank
+            jan_growth = ws.cell(2, 3).value
+            self.assertIn(jan_growth, (None, ""))
+
+            # Row 3 (Feb): (1085000 - 1240000) / 1240000 = -0.125 (-12.5%)
+            feb_growth = ws.cell(3, 3).value
+            self.assertAlmostEqual(feb_growth, -0.125, places=4)
+
+            # Row 4 (Mar): (1310000 - 1085000) / 1085000 = 0.207373... (~20.7%)
+            mar_growth = ws.cell(4, 3).value
+            self.assertAlmostEqual(mar_growth, 0.20737, places=4)
+
+            # Row 5 (Total): growth is blank
+            tot_growth = ws.cell(5, 3).value
+            self.assertIn(tot_growth, (None, ""))
+
+    def test_xlsx_spec_containing_equals_is_rejected(self):
+        """A spec containing '=SUM' is rejected with error to use total_row and computed_columns."""
+        from filesvc.generators.registry import get_generator
+
+        gen = get_generator("xlsx")
+        spec = {
+            "headers": ["Month", "Revenue (INR)"],
+            "rows": [
+                ["Jan", 1000],
+                ["Total", "=SUM(B2:B3)"],
+            ],
+        }
+        with self.assertRaises(ValueError) as ctx:
+            gen.validate_spec(spec)
+        err_msg = str(ctx.exception)
+        self.assertIn("Formulas starting with '=' are forbidden", err_msg)
+        self.assertIn("Use 'total_row' and 'computed_columns' instead", err_msg)
 
     def test_xlsx_verification_catches_sum_mismatch_and_non_blank_growth(self):
         """Verification raises ValueError if total sum mismatches or growth column rules are violated."""
         import tempfile
+        import openpyxl
         from filesvc.generators.verification import verify_generated_file
         from filesvc.generators.registry import get_generator
 
@@ -703,10 +768,15 @@ class FileServiceTests(TransactionTestCase):
                 "rows": [
                     ["Jan", 1000],
                     ["Feb", 1500],
-                    ["Total", 9999],  # Incorrect sum
+                    ["Total", 2500],
                 ],
             }
             gen.generate(spec_bad_sum, bad_sum_path)
+            # Intentionally corrupt the total cell in file to 9999
+            wb_corrupt = openpyxl.load_workbook(bad_sum_path)
+            wb_corrupt.active.cell(4, 2, 9999)
+            wb_corrupt.save(bad_sum_path)
+
             with self.assertRaises(ValueError) as ctx:
                 verify_generated_file("xlsx", bad_sum_path, spec_bad_sum)
             self.assertIn("does not match sum of data rows", str(ctx.exception))
@@ -716,12 +786,17 @@ class FileServiceTests(TransactionTestCase):
             spec_bad_growth = {
                 "headers": ["Month", "Revenue (INR)", "MoM Growth"],
                 "rows": [
-                    ["Jan", 1000, 0.10],  # Must be blank
-                    ["Feb", 1500, 0.50],
-                    ["Total", 2500, ""],
+                    ["Jan", 1000],
+                    ["Feb", 1500],
+                    ["Total", 2500],
                 ],
+                "computed_columns": [{"header": "MoM Growth", "kind": "pct_change", "source": "Revenue (INR)"}],
             }
             gen.generate(spec_bad_growth, bad_growth_path)
+            wb_corrupt_growth = openpyxl.load_workbook(bad_growth_path)
+            wb_corrupt_growth.active.cell(2, 3, 0.10)  # C2 must be blank
+            wb_corrupt_growth.save(bad_growth_path)
+
             with self.assertRaises(ValueError) as ctx2:
                 verify_generated_file("xlsx", bad_growth_path, spec_bad_growth)
             self.assertIn("first period growth cell C2 must be blank", str(ctx2.exception))

@@ -120,8 +120,12 @@ def verify_generated_file(kind: str, file_path: str, spec: dict) -> Dict[str, An
         if ws_data.max_row < 1:
             raise ValueError("Verification failed: generated XLSX has 0 rows.")
 
-        if expected_headers:
-            for idx, h in enumerate(expected_headers, start=1):
+        computed_cols = spec.get("computed_columns") or (spec.get("sheets") and spec["sheets"][0].get("computed_columns")) or []
+        extra_cols = [c.get("header") for c in computed_cols if isinstance(c, dict) and c.get("header") and c.get("header") not in expected_headers]
+        all_expected_headers = list(expected_headers) + extra_cols
+
+        if all_expected_headers:
+            for idx, h in enumerate(all_expected_headers, start=1):
                 cell_h = ws_data.cell(1, idx).value
                 if cell_h is None or str(cell_h).strip() != str(h).strip():
                     raise ValueError(f"Verification failed: header row missing or column {idx} mismatch (expected '{h}', got '{cell_h}').")
@@ -133,62 +137,67 @@ def verify_generated_file(kind: str, file_path: str, spec: dict) -> Dict[str, An
             if isinstance(first_s, dict):
                 expected_rows = first_s.get("rows") or []
 
-        expected_row_count = len(expected_rows) + (1 if expected_headers else 0)
-        expected_col_count = len(expected_headers) if expected_headers else (len(expected_rows[0]) if expected_rows else 0)
+        has_total_spec = bool(spec.get("total_row") or (spec.get("sheets") and spec["sheets"][0].get("total_row")))
+        has_total_in_rows = any(isinstance(r, (list, tuple)) and len(r) > 0 and str(r[0].get("value") if isinstance(r[0], dict) else r[0]).strip().lower() == "total" for r in expected_rows)
+
+        total_row_added = (has_total_spec and not has_total_in_rows)
+        expected_row_count = len(expected_rows) + (1 if all_expected_headers else 0) + (1 if total_row_added else 0)
+        expected_col_count = len(all_expected_headers) if all_expected_headers else (len(expected_rows[0]) if expected_rows else 0)
 
         if ws_data.max_row != expected_row_count:
             raise ValueError(f"Verification failed: row count mismatch (expected {expected_row_count} rows, found {ws_data.max_row}).")
         if expected_col_count and ws_data.max_column != expected_col_count:
             raise ValueError(f"Verification failed: column count mismatch (expected {expected_col_count} columns, found {ws_data.max_column}).")
 
-        # 3. Check every non-blank cell expected by spec has a value & no formula cell has None cached value
-        for r_offset, row_spec in enumerate(expected_rows):
-            r_idx = r_offset + (2 if expected_headers else 1)
-            if not isinstance(row_spec, (list, tuple)):
-                row_spec = [row_spec]
+        # 3. Check for #REF! or formula errors and unexpectedly empty cells
+        for r in range(1, ws_data.max_row + 1):
+            for c in range(1, ws_data.max_column + 1):
+                cv = str(ws_data.cell(r, c).value or "")
+                raw_v = str(ws_raw.cell(r, c).value or "")
+                coord = ws_data.cell(r, c).coordinate
+                if "#REF!" in cv or "#REF!" in raw_v:
+                    raise ValueError(f"Verification failed: cell {coord} contains '#REF!'.")
+                if any(err in cv for err in ["#VALUE!", "#NAME?", "#N/A", "#DIV/0!"]):
+                    raise ValueError(f"Verification failed: cell {coord} contains error '{cv}'.")
 
-            for c_offset, cell_spec in enumerate(row_spec):
-                c_idx = c_offset + 1
-                val_cached = ws_data.cell(r_idx, c_idx).value
-                val_raw = ws_raw.cell(r_idx, c_idx).value
-                coord = ws_data.cell(r_idx, c_idx).coordinate
-                is_formula = isinstance(val_raw, str) and val_raw.startswith("=")
+        # Check no cell is unexpectedly empty
+        for r in range(2, ws_data.max_row + 1):
+            is_last_row = (r == ws_data.max_row and str(ws_data.cell(r, 1).value or "").strip().lower() == "total")
+            for c in range(1, ws_data.max_column + 1):
+                col_h = str(ws_data.cell(1, c).value or "").lower()
+                is_growth_col = "growth" in col_h or "%" in col_h
+                val = ws_data.cell(r, c).value
+                coord = ws_data.cell(r, c).coordinate
 
-                # No formula cell has a None cached value
-                if is_formula and val_cached is None:
-                    raise ValueError(f"Verification failed: formula cell {coord} ('{val_raw}') has a None cached value.")
-
-                # Non-blank expected value check
-                exp_val = cell_spec.get("value") if isinstance(cell_spec, dict) else cell_spec
-                is_blank_expected = (
-                    (exp_val is None or exp_val == "") and not is_formula
-                )
-                if not is_blank_expected and (val_cached is None or str(val_cached).strip() == ""):
-                    raise ValueError(f"Verification failed: cell {coord} expected value '{exp_val}' but cell is empty/None.")
+                if is_growth_col:
+                    if r == 2:
+                        # First data row must be blank
+                        if val is not None and str(val).strip() not in ("", "-"):
+                            raise ValueError(f"Verification failed: first period growth cell {coord} must be blank.")
+                    elif is_last_row:
+                        # Total row must be blank
+                        if val is not None and str(val).strip() not in ("", "-"):
+                            raise ValueError(f"Verification failed: total row growth cell {coord} must be blank.")
+                    else:
+                        if val is None or str(val).strip() == "":
+                            raise ValueError(f"Verification failed: cell {coord} is unexpectedly empty.")
+                else:
+                    if val is None or str(val).strip() == "":
+                        raise ValueError(f"Verification failed: cell {coord} is unexpectedly empty.")
 
         # 4. Total row verification (totals equal sum of data rows)
         totals_summary = []
-        if len(expected_rows) >= 2:
+        if ws_data.max_row >= 3:
             last_row_first = ws_data.cell(ws_data.max_row, 1).value
             if last_row_first and str(last_row_first).strip().lower() == "total":
                 for c in range(2, ws_data.max_column + 1):
                     col_header = str(ws_data.cell(1, c).value or f"Col{c}")
                     col_h_lower = col_header.lower()
 
-                    # Growth column check: total row's growth must be blank
                     if "growth" in col_h_lower or "%" in col_h_lower:
-                        tot_growth_val = ws_data.cell(ws_data.max_row, c).value
-                        if tot_growth_val is not None and str(tot_growth_val).strip() not in ("", "-"):
-                            coord = ws_data.cell(ws_data.max_row, c).coordinate
-                            raise ValueError(f"Verification failed: total row growth cell {coord} must be blank.")
-                        # Verify first period growth is blank
-                        first_period_growth = ws_data.cell(2, c).value
-                        if first_period_growth is not None and str(first_period_growth).strip() not in ("", "-"):
-                            coord = ws_data.cell(2, c).coordinate
-                            raise ValueError(f"Verification failed: first period growth cell {coord} must be blank.")
                         continue
 
-                    # Sum numeric data rows
+                    # Sum numeric data rows (rows 2 to max_row - 1, including January!)
                     data_nums = []
                     for r in range(2, ws_data.max_row):
                         cv = ws_data.cell(r, c).value
@@ -197,9 +206,11 @@ def verify_generated_file(kind: str, file_path: str, spec: dict) -> Dict[str, An
                         elif cv is None or cv == "":
                             continue
                         else:
-                            # Not a numeric column
-                            data_nums = []
-                            break
+                            try:
+                                data_nums.append(float(str(cv).replace(",", "").replace("$", "").replace("₹", "")))
+                            except ValueError:
+                                data_nums = []
+                                break
 
                     if data_nums:
                         sum_data = sum(data_nums)
@@ -227,7 +238,7 @@ def verify_generated_file(kind: str, file_path: str, spec: dict) -> Dict[str, An
 
         tot_text = ", ".join(totals_summary) if totals_summary else "N/A"
         summary = (
-            f"Verified XLSX: {len(expected_rows)} row(s), {ws_data.max_column} column(s). "
+            f"Verified XLSX: {ws_data.max_row - 2} data row(s), {ws_data.max_column} column(s). "
             f"Total row: ({tot_text}). "
             f"Sample: {'; '.join(sample_cells)}"
         )
