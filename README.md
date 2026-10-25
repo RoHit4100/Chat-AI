@@ -1,18 +1,18 @@
 # Chat-AI: Enterprise Agentic Assistant & Document Platform
 
-A full-stack, enterprise-grade AI conversational platform powered by **Django 5 (ASGI / Uvicorn)**, **LangGraph**, **React 18 (Vite)**, **PostgreSQL 16**, and **Keycloak OIDC**. Features real-time Server-Sent Events (SSE) streaming, rolling conversational memory compaction, secure multi-format document parsing, multi-format artifact generation with version revisions, strict object-level multi-tenancy, and defensive prompt-injection guardrails.
+A production-ready, full-stack conversational AI platform built with **Django 5 (ASGI / Uvicorn)**, **LangGraph**, **React 18 (Vite)**, **PostgreSQL 16**, and **Keycloak OIDC**. Features token-by-token Server-Sent Events (SSE) streaming, rolling memory compaction for 200+ message threads, secure multi-format document parsing, multi-format file generation with revisions, live web browsing with SSRF protection, strict multi-tenancy, and defensive prompt-injection guardrails.
 
 ---
 
 ## Architecture
 
-The following diagram illustrates the end-to-end request lifecycle, authentication boundaries, LangGraph state machine execution, and persistence layers:
+The following diagram illustrates the client-server request lifecycle, identity verification, LangGraph state machine execution, and persistence boundaries:
 
 ```mermaid
 flowchart TB
     subgraph Client["Browser (React 18 + Vite)"]
-        UI["Chat UI / File Composer"]
-        AuthClient["Keycloak JS (PKCE)"]
+        UI["Chat UI / Drag-and-Drop Composer"]
+        AuthClient["Keycloak JS (PKCE S256)"]
         StreamReader["ReadableStream SSE Consumer"]
     end
 
@@ -21,25 +21,24 @@ flowchart TB
     end
 
     subgraph Backend["Django 5 ASGI (Uvicorn)"]
-        AuthMiddleware["JWT JWKS Validator (RS256)"]
+        AuthMiddleware["JWT RS256 JWKS Validator"]
         ChatViews["Chat & Stream Views (ASGI)"]
-        FileService["File Service & Parsers"]
-        Generators["Document Generators"]
-        Logging["Structured JSON Logger"]
+        FileService["File Ingestion & Parsers"]
+        Generators["Document Generators (Pydantic Specs)"]
         
-        subgraph Agent["LangGraph Agent State Machine"]
-            START((START)) --> prepare["prepare_node\n(Load Manifest & Init)"]
+        subgraph Agent["LangGraph State Machine Agent"]
+            START((START)) --> prepare["prepare_node\n(Manifest & Summary Loader)"]
             prepare --> agent["agent_node\n(LLM + Bound Tools)"]
             agent --> should_continue{"should_continue"}
-            should_continue -- "Tool Calls" --> tools["tools_node\n(read_file, generate_file, etc.)"]
+            should_continue -- "Tool Calls" --> tools["tools_node\n(read_file, generate_file,\nweb_search, browse_web_page)"]
             tools --> agent
             should_continue -- "Direct Answer" --> summarize["summarize_node\n(Rolling Memory Compaction)"]
             summarize --> END((END))
         end
     end
 
-    subgraph Storage["Persistence & Volume"]
-        PG[("PostgreSQL 16\n- Django Models\n- LangGraph Checkpoints")]
+    subgraph Storage["Persistence & Volume Storage"]
+        PG[("PostgreSQL 16\n- Relational Models (Thread, Message, File)\n- LangGraph Async Checkpoints")]
         Volume[("Shared Media Volume\n/data/uploads\n/data/parsed\n/data/generated")]
     end
 
@@ -50,36 +49,42 @@ flowchart TB
     StreamReader -- "4. POST /api/threads/:id/stream\n(Bearer Token)" --> AuthMiddleware
 
     %% Backend processing
-    AuthMiddleware -- "Verify Signature (JWKS)" --> KC
+    AuthMiddleware -- "Stateless JWKS Validation" --> KC
     AuthMiddleware --> ChatViews
     ChatViews --> Agent
     FileService --> Volume
     Generators --> Volume
     Agent --> PG
-    ChatViews -- "5. SSE Event Stream\n(token, status, file, done)" --> StreamReader
+    ChatViews -- "5. SSE Stream (token, status, file, done)" --> StreamReader
 ```
 
 ---
 
 ## Features
 
-- **Real-Time SSE Streaming**: Low-latency token-by-token streaming using native HTTP `ReadableStream` over async Django views, with mid-answer **Stop** (AbortController) and **Regenerate** support.
-- **LangGraph State Machine Memory**: Fault-tolerant conversational graphs powered by PostgreSQL checkpointers (`AsyncPostgresSaver`). Conversations survive container restarts and browser refreshes.
-- **Rolling Memory Summarization**: Automatically tracks token usage with heuristic and model metadata. When conversations exceed `MAX_TOKENS`, older messages are compacted into a rolling summary while preserving the last `KEEP_LAST` messages verbatim.
-- **Comprehensive Document Parsing**:
-  - Secure parsing for **PDF** (`pypdf`), **DOCX** (`python-docx`), **XLSX / CSV** (`openpyxl`, `pandas`), **PPTX** (`python-pptx`), **Images** (`PIL`), **Code/Text**, and **JSON**.
-  - **ZIP Safety Guardrails**: Enforces max member limits, total uncompressed size limits, path traversal blocking, and nested archive rejection.
-- **Structured Artifact Generation & Multi-Version Revisions**:
-  - Model can generate **Markdown**, **Code scripts**, **DOCX**, **PDF**, **XLSX**, **CSV**, **PPTX**, and **Matplotlib PNG Charts**.
-  - Revisions inspect parent specifications via `read_generated_spec` and generate subsequent versions (`v1 -> v2`) with parent-child linkage.
-- **Security & Multi-Tenant Isolation**:
-  - Strict object-level permission enforcement across all endpoints, database queries, and agent tools.
-  - User-supplied filenames are never stored on disk (random UUID paths).
-  - Defensive prompt-injection wrapping: document text is isolated inside `<untrusted_file_content>` XML tags with non-execution directives.
-  - MIME type verification with `python-magic` prevents extension spoofing.
-- **Keycloak OIDC Integration**: Standard OAuth2 / OIDC PKCE flow, proactive token refresh, automatic session expiration handling, and full client state clearing on logout.
-- **Structured JSON Logging**: Request tracing with unique `X-Request-ID` propagation, response timing, and machine-readable JSON logs for observability.
-- **Automated Orphan Cleanup**: Sweeper utility and management command to identify and purge uploads never attached to a message.
+- **Long-Running Chat & Context Compaction**:
+  - Handles 200+ message multi-turn conversations without context window overflow.
+  - Automatically triggers compaction when conversation tokens exceed `MAX_TOKENS` (default 6,000), compacting older turns into a cumulative rolling summary while preserving the last `KEEP_LAST` messages verbatim.
+  - Checkpointed state survives page refreshes and backend container restarts (`AsyncPostgresSaver`).
+  - Low-latency SSE streaming with client-side **Stop** (`AbortController`) and **Regenerate** support.
+- **Any File In (Universal Document Parsing)**:
+  - Drag-and-drop ingestion of **PDF** (`pypdf` + AcroForm + OCR fallback), **DOCX** (`python-docx`), **XLSX / CSV** (`openpyxl`, `pandas`), **PPTX** (`python-pptx`), **Images** (`Pillow`), **Code / Plain Text**, **JSON**, and **ZIP**.
+  - Security guardrails: ZIP bomb protection (uncompressed limit 50MB, member limit 100), directory traversal blocking, nested archive rejection, and MIME magic byte verification (`python-magic`).
+  - Memory-safe manifest injection: summaries are exposed to the agent; full contents are queried dynamically via `read_file`.
+- **Any File Out (Artifact Generation & Revisions)**:
+  - Creates real files with downloadable cards in chat: **PDF** (ReportLab with DejaVu Unicode fonts & ATS resume layouts), **DOCX**, **XLSX**, **CSV**, **PPTX**, **PNG charts** (Matplotlib), **Markdown**, and **Code**.
+  - Interactive file previews in UI: Markdown preview, tabular CSV/XLSX preview, image preview, and document section breakdown.
+  - Spec-based revisions (`based_on` parameter): users can ask to "add a column" or "make it shorter", linking subsequent versions (`v1 -> v2`).
+- **Live Web Search & Browsing**:
+  - Live internet research via `web_search` (DuckDuckGo integration with fallback) and `browse_web_page` (live HTML extraction with script/style stripping).
+  - Robust SSRF protection: blocks private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`), link-local/cloud metadata (`169.254.169.254`), container names (`db`, `keycloak`, `backend`, `frontend`), and inspects all redirect hops.
+  - Defense-in-depth: external search and page data are wrapped in `<untrusted_web_content>` tags.
+- **Enterprise Security & Multi-Tenancy**:
+  - Keycloak OIDC authentication with PKCE. Tokens verified statelessly via cached JWKS public keys.
+  - Strict object-level query isolation across all threads, files, and agent tools.
+  - Defensive prompt-injection wrapping for all uploaded and external data.
+- **Responsive Modern UI**:
+  - Sleek dark-mode interface with glassmorphic cards, syntax-highlighted code blocks, drag-and-drop file upload with progress, and full mobile responsive drawer navigation.
 
 ---
 
@@ -87,177 +92,161 @@ flowchart TB
 
 | Layer | Technologies |
 |---|---|
-| **Backend** | Python 3.11+, Django 5.1, Django REST Framework, Uvicorn (ASGI) |
-| **Agent / Orchestration** | LangGraph 0.2+, LangChain 0.3+, Psycopg 3 (`AsyncPostgresSaver`) |
-| **Frontend** | React 18, Vite, Axios, React Markdown, Remark GFM, PrismJS |
-| **Auth** | Keycloak 26 (Dockerized Quay image), `keycloak-js`, PyJWT |
-| **Database** | PostgreSQL 16 (Relational tables + LangGraph binary checkpoints) |
-| **Parsers & Generators** | `pypdf`, `python-docx`, `openpyxl`, `pandas`, `python-pptx`, `reportlab`, `matplotlib`, `python-magic` |
-| **Infrastructure** | Docker Compose v2, Multi-stage Dockerfiles, Docker Volumes |
+| **Backend** | Python 3.13, Django 5.1.6, Django REST Framework 3.15.2, Uvicorn 0.34.0 (ASGI) |
+| **Agent / Workflow** | LangGraph 1.2.17, LangChain Core 1.7.0, Psycopg 3.3.6 (`AsyncPostgresSaver`) |
+| **Frontend** | React 18, Vite 5, Axios, Lucide React, React Markdown, Remark GFM, PrismJS |
+| **Authentication** | Keycloak 26.1.3 (Dockerized Quay image), `keycloak-js`, PyJWT |
+| **Database** | PostgreSQL 16 Alpine (Relational database & binary LangGraph checkpointer) |
+| **Parsers & Generators** | `pypdf`, `python-docx`, `openpyxl`, `pandas`, `python-pptx`, `reportlab`, `matplotlib`, `python-magic`, `ddgs`, `primp`, `httpx` |
+| **Infrastructure** | Docker Compose v2, Named Docker Volumes, Docker Healthchecks |
 
 ---
 
 ## Prerequisites
 
-- **Docker** (version 24.0+) & **Docker Compose** (version 2.20+)
-- Minimum **4 GB RAM** and **10 GB disk space**
-- *(Optional, for running without Docker)*: Python 3.11+, Node.js 20+, PostgreSQL 16 server.
+- **Docker Engine** (version 24.0+) & **Docker Compose** (version 2.20+)
+- Minimum **4 GB RAM** and **10 GB free disk space**
+- *(Optional)*: An OpenAI API key (`OPENAI_API_KEY=sk-...`). If no key is available, `FAKE_LLM=1` can be used to run full deterministic simulations.
 
 ---
 
 ## Environment Variables
 
-| Variable | Default Value | Description / Purpose |
-|---|---|---|
-| `POSTGRES_DB` | `aichat` | PostgreSQL database name |
-| `POSTGRES_USER` | `postgres` | PostgreSQL administrative username |
-| `POSTGRES_PASSWORD` | `postgres` | PostgreSQL administrative password |
-| `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/aichat` | Database connection string used by Django and LangGraph checkpointer |
-| `SECRET_KEY` | `dev-secret-key-replace-in-production` | Django secret key for cryptographic signing |
-| `DEBUG` | `1` | Enable Django debug mode (`0` in production) |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | Comma-separated list of permitted host headers |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Permitted cross-origin resource sharing origins |
-| `BACKEND_URL` | `http://backend:8000` | Internal backend service URL used by the frontend container proxy |
-| `KEYCLOAK_ADMIN` | `admin` | Keycloak administrative console username |
-| `KEYCLOAK_ADMIN_PASSWORD` | `admin1234` | Keycloak administrative console password |
-| `KEYCLOAK_PUBLIC_URL` | `http://localhost:8080/realms/chat` | Keycloak public URL accessible from the browser for OIDC tokens |
-| `KEYCLOAK_INTERNAL_URL` | `http://keycloak:8080/realms/chat/protocol/openid-connect/certs` | Internal container URL used by backend to fetch JWKS public keys |
-| `KEYCLOAK_CLIENT_ID` | `chat-web` | Keycloak client identifier configured for PKCE |
-| `FAKE_LLM` | `0` | Set to `1` to run deterministic synthetic model responses without an API key |
-| `LLM_PROVIDER` | `openai` | Active model provider (`openai`, `anthropic`, `google`) |
-| `LLM_MODEL` | `gpt-4o-mini` | Model name passed to provider constructor |
-| `OPENAI_API_KEY` | *(empty)* | API key for OpenAI (required if `LLM_PROVIDER=openai` and `FAKE_LLM=0`) |
-| `ANTHROPIC_API_KEY` | *(empty)* | API key for Anthropic Claude models |
-| `GOOGLE_API_KEY` | *(empty)* | API key for Google Gemini models |
-| `MAX_TOKENS` | `6000` | Conversation token ceiling triggering memory compaction |
-| `KEEP_LAST` | `8` | Number of recent messages preserved verbatim during compaction |
-| `MAX_FILE_SIZE_BYTES` | `26214400` (25 MB) | Per-file upload ceiling |
-| `MAX_REQUEST_SIZE_BYTES` | `104857600` (100 MB) | Total request body ceiling across multi-file uploads |
-| `MAX_ZIP_MEMBERS` | `100` | Maximum allowable files inside an uploaded ZIP archive |
-| `MAX_ZIP_UNCOMPRESSED_SIZE` | `52428800` (50 MB) | Maximum uncompressed payload extracted from an archive |
-| `THROTTLE_RATE_UPLOAD` | `60/minute` | DRF upload and download rate limit per user |
-| `THROTTLE_RATE_CHAT` | `60/minute` | DRF chat turn and streaming rate limit per user |
-| `MEDIA_ROOT` | `/data` | Base filesystem directory for raw, parsed, and generated files |
+| Variable | Default Value | Meaning / Purpose | Required |
+|---|---|---|---|
+| `POSTGRES_DB` | `aichat` | PostgreSQL database name | No |
+| `POSTGRES_USER` | `postgres` | PostgreSQL username | No |
+| `POSTGRES_PASSWORD` | `postgres` | PostgreSQL password | No |
+| `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/aichat` | Full database connection string | No |
+| `SECRET_KEY` | `dev-secret-key-replace-in-production` | Django secret key for cryptographic signatures | Yes (in prod) |
+| `DEBUG` | `1` | Enable Django debug mode (`0` in production) | No |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1,backend` | Permitted host headers | No |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Allowed CORS origins for the frontend | No |
+| `BACKEND_URL` | `http://backend:8000` | Backend URL for internal container communication | No |
+| `KEYCLOAK_ADMIN` | `admin` | Keycloak administrative console username | No |
+| `KEYCLOAK_ADMIN_PASSWORD` | `admin1234` | Keycloak administrative console password | No |
+| `KEYCLOAK_PUBLIC_URL` | `http://localhost:8080/realms/chat` | Keycloak URL accessible by browser clients | No |
+| `KEYCLOAK_INTERNAL_URL` | `http://keycloak:8080/realms/chat/protocol/openid-connect/certs` | Internal container URL used by backend to fetch JWKS | No |
+| `KEYCLOAK_CLIENT_ID` | `chat-web` | Keycloak OIDC client identifier configured for PKCE | No |
+| `FAKE_LLM` | `0` | Set to `1` to run deterministic synthetic responses without an API key | No |
+| `LLM_PROVIDER` | `openai` | Model provider (`openai`, `anthropic`, `google`) | No |
+| `LLM_MODEL` | `gpt-4o-mini` | LLM model identifier | No |
+| `OPENAI_API_KEY` | *(empty)* | OpenAI API key | Yes (if `FAKE_LLM=0`) |
+| `ANTHROPIC_API_KEY` | *(empty)* | Anthropic Claude API key | No |
+| `GOOGLE_API_KEY` | *(empty)* | Google Gemini API key | No |
+| `MAX_TOKENS` | `6000` | Token threshold triggering rolling memory compaction | No |
+| `KEEP_LAST` | `8` | Number of recent messages preserved verbatim during compaction | No |
+| `MAX_FILE_SIZE_BYTES` | `26214400` (25 MB) | Single-file upload limit | No |
+| `MAX_REQUEST_SIZE_BYTES` | `104857600` (100 MB) | Total multipart upload limit across files | No |
+| `MAX_ZIP_MEMBERS` | `100` | Maximum member files allowed in an uploaded ZIP archive | No |
+| `MAX_ZIP_UNCOMPRESSED_SIZE` | `52428800` (50 MB) | Maximum uncompressed payload extracted from an archive | No |
+| `THROTTLE_RATE_UPLOAD` | `60/minute` | Upload and download rate limit per user | No |
+| `THROTTLE_RATE_CHAT` | `60/minute` | Chat message and streaming rate limit per user | No |
+| `MEDIA_ROOT` | `/data` | Base storage path for uploaded, parsed, and generated files | No |
 
 ---
 
-## Quickstart (Setup in 5 Commands)
-
-Clone, configure, build, and launch the complete stack with:
+## Setup in 5 Commands or Fewer
 
 ```bash
 # 1. Clone repository
 git clone https://github.com/RoHit4100/Chat-AI.git && cd Chat-AI
 
-# 2. Prepare environment configuration
+# 2. Configure environment variables (add your OPENAI_API_KEY or keep FAKE_LLM=1)
 cp .env.example .env
-# Edit .env and either set FAKE_LLM=1 or add your OPENAI_API_KEY=sk-...
 
 # 3. Launch Docker Compose stack
 docker compose up --build
 
-# 4. Open browser
+# 4. Open application in browser
 # Navigate to http://localhost:3000
 
-# 5. Log in with pre-seeded demo user:
+# 5. Log in with demo credentials:
 # Username: demo | Password: demo1234
-# (Or click "Register" on Keycloak login page to create a new user)
 ```
 
 ---
 
-## Keycloak Notes
+## Demo Login Credentials & Keycloak Notes
 
-- **Admin Console**: `http://localhost:8080/admin`
-  - Credentials: username `admin`, password `admin1234` (from `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD`).
-- **Realm & Client Configuration**:
-  - The stack automatically mounts [`keycloak/realm-export.json`](file:///e:/GenAi/Chat-AI/keycloak/realm-export.json) at boot.
-  - **Realm**: `chat`
+- **Application URL**: `http://localhost:3000`
+- **Pre-Seeded Demo User**:
+  - **Username**: `demo`
+  - **Password**: `demo1234`
+- **Keycloak Administration Console**:
+  - **URL**: `http://localhost:8080/admin`
+  - **Admin User**: `admin`
+  - **Admin Password**: `admin1234`
+- **Realm & Client Details**:
+  - **Realm**: `chat` (auto-imported from `keycloak/realm-export.json`).
   - **Client**: `chat-web` (Public client, Standard Flow + Direct Grants, PKCE `S256`, Web Origins: `http://localhost:3000`).
-- **How to Add New Users**:
-  1. Open `http://localhost:8080/admin` and select the **chat** realm from the top-left dropdown.
-  2. Navigate to **Users** -> **Add user**. Enter a username and email, ensure **Enabled** is toggled ON, and click **Create**.
-  3. Switch to the **Credentials** tab, click **Set password**, enter a password, toggle **Temporary** OFF, and save.
+  - **User Registration**: Enabled by default; users can click **Register** on the Keycloak login screen to create a new account.
 - **Why `KEYCLOAK_PUBLIC_URL` and `KEYCLOAK_INTERNAL_URL` Differ**:
-  - The user's web browser resolves Keycloak at `http://localhost:8080`. Therefore, Keycloak stamps the token issuer (`iss`) claim as `http://localhost:8080/realms/chat`.
-  - The Django backend runs inside the Docker bridge network, where `localhost:8080` would resolve to the backend container itself. The backend connects to `http://keycloak:8080` to retrieve the JSON Web Key Set (JWKS), but verifies that `iss` matches `http://localhost:8080/realms/chat`.
+  - Browsers access Keycloak at `http://localhost:8080`, so Keycloak issues tokens with `iss: http://localhost:8080/realms/chat`.
+  - The Django container runs inside Docker where `localhost:8080` points to itself. The backend connects to `http://keycloak:8080` to fetch public signing keys (JWKS), but verifies that the token's `iss` matches `http://localhost:8080/realms/chat`.
 
 ---
 
-## Running Without Docker (Local Development)
+## Supported File Types In and Out
 
-If you prefer to run services natively on host machines:
+| Direction | Format | Extensions | Library / Engine | Capabilities |
+|---|---|---|---|---|
+| **Input** | PDF Documents | `.pdf` | `pypdf`, `pdf2image`, `pytesseract` | Plain text extraction, AcroForm fields (`label: value`), OCR rasterization for image-heavy pages |
+| **Input** | Word Documents | `.docx` | `python-docx` | Headings, paragraphs, tables, and bullet lists |
+| **Input** | Spreadsheets | `.xlsx`, `.xls`, `.csv` | `openpyxl`, `pandas` | Sheet schemas, row counts, column names, bounded row chunk reading |
+| **Input** | Presentations | `.pptx` | `python-pptx` | Slide titles, text boxes, and table contents |
+| **Input** | Images | `.png`, `.jpg`, `.jpeg`, `.webp` | `Pillow` | Dimensions, color modes, and vision metadata extraction |
+| **Input** | Code / Text | `.txt`, `.py`, `.js`, `.json`, etc. | Python standard library | UTF-8 decoded text, structured JSON schemas |
+| **Input** | Archives | `.zip` | `zipfile` | Safe multi-file extraction with path traversal and compression bomb protection |
+| **Output** | PDF Documents | `.pdf` | `ReportLab` | Professional layout with DejaVu Unicode fonts, ATS resume formatting, headers, bullets |
+| **Output** | Word Documents | `.docx` | `python-docx` | Formatted documents with structured sections, tables, and styles |
+| **Output** | Spreadsheets | `.xlsx`, `.csv` | `openpyxl`, `pandas` | Tabular data with formatted headers, auto-width columns, formulas |
+| **Output** | Presentations | `.pptx` | `python-pptx` | 16:9 widescreen presentation slide decks |
+| **Output** | Charts | `.png` | `matplotlib` | High-resolution line charts, bar graphs, scatter plots, and pie charts |
+| **Output** | Markdown / Code | `.md`, `.py`, `.js`, etc. | Standard writers | Documentation and runnable code files |
 
-### 1. Start Local PostgreSQL & Keycloak
-Ensure PostgreSQL is running locally on port `5432` with database `aichat`. Launch Keycloak on port `8080` or run Keycloak standalone via Docker:
+---
+
+## How to Run Tests
+
+The test suite contains **91 comprehensive tests** covering authentication, LangGraph memory compaction, document parsers, file generators, SSRF defenses, and streaming status events.
+
+### Running Inside Docker
 ```bash
-docker run -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin1234 -v $(pwd)/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro quay.io/keycloak/keycloak:26.1.3 start-dev --import-realm
+docker compose exec backend python manage.py test chat filesvc
 ```
 
-### 2. Configure Backend
+### Running Individual Test Suites
 ```bash
-cd backend
-python -m venv venv
-# On Windows: venv\Scripts\activate | On macOS/Linux: source venv/bin/activate
-pip install -r requirements.txt
+# Web search, live browsing, and SSRF prevention tests (12 tests)
+docker compose exec backend python manage.py test chat.tests_web_search
 
-# Run migrations
-python manage.py migrate
+# Core bugfix & regression test suite (14 tests)
+docker compose exec backend python manage.py test chat.tests_bugfixes
 
-# Launch ASGI server with Uvicorn
-uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --reload
-```
+# File parsing, generators, and validators (27 tests)
+docker compose exec backend python manage.py test filesvc.tests
 
-### 3. Configure Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-# Vite runs at http://localhost:3000
+# Multi-tenancy, review, and permissions (27 tests)
+docker compose exec backend python manage.py test chat.tests_review
 ```
 
 ---
 
-## Running Tests
+## How to Run the Long-Thread Demo
 
-The test suite runs with automatic SQLite fallback and mock in-memory checkpointer without requiring active network or database instances:
-
-```bash
-cd backend
-python manage.py test
-```
-
-To run individual test modules:
-```bash
-# Authentication & Core Chat API tests
-python manage.py test chat.tests
-
-# Review, Security, Permissions, and Edge Cases
-python manage.py test chat.tests_review
-
-# File Service, Parsers, and Document Generators
-python manage.py test filesvc.tests
-```
-
-All 52 tests execute synchronously in approximately 1 second.
-
----
-
-## Running the Long-Thread Demo
-
-The repository includes an automated script that exercises rolling summarization across 200+ conversational turns:
+The automated long-thread demo script runs **205 conversational turns** through the API with compact memory thresholds to verify rolling summarization and historical fact recall:
 
 ```bash
-cd backend
-python scripts/long_thread_demo.py
+docker compose exec backend python scripts/long_thread_demo.py
 ```
 
-### What It Does:
-1. Creates a fresh thread using the service-token test authentication bypass.
-2. Seeds a secret launch code (`OMEGA-42`) in message #3.
-3. Pumps 205 conversational turns through the live API with `MAX_TOKENS=200` to trigger successive compactions.
-4. Messages older than `KEEP_LAST=8` are summarized by the agent's summarization node, merging older turns into `state.summary`.
-5. Prompts the agent at turn #205 for the early launch code; verifies that the agent accurately recalls `OMEGA-42` from its rolling memory summary.
+### What It Validates:
+1. Creates a fresh thread via the API.
+2. Injects a secret launch code (`OMEGA-42`) in message #3.
+3. Pumps 205 turns through the LangGraph engine with `MAX_TOKENS=200`.
+4. Compaction node triggers periodically, rolling older turns into `state.summary` while keeping only the last 8 messages in working memory.
+5. On turn #205, asks the agent for the launch code; verifies accurate recall from the rolling summary.
 
 ---
 
@@ -265,92 +254,95 @@ python scripts/long_thread_demo.py
 
 The [`sample_files/`](file:///e:/GenAi/Chat-AI/sample_files/) directory provides pre-packaged test documents:
 
-- **`sample.pdf`**: Sample PDF document for text and table extraction.
-- **`sample.docx`**: Rich Microsoft Word document with headings and bullet lists.
-- **`sample.xlsx`**: Excel workbook with numerical data for spreadsheet schema analysis.
-- **`sample.csv`**: Delimited CSV file with tabular metrics.
-- **`sample.pptx`**: PowerPoint slide deck testing presentation parsing.
-- **`sample.png`**: Raster image verifying dimension extraction and vision pipeline metadata.
+- **`sample.pdf`**: Sample PDF testing plain text extraction.
+- **`sample.docx`**: Word document testing headings and bullet lists.
+- **`sample.xlsx`**: Excel workbook with tabular data.
+- **`sample.csv`**: Delimited CSV file with population metrics.
+- **`sample.pptx`**: PowerPoint presentation slide deck.
+- **`sample.png`**: Raster image verifying dimension extraction.
 - **`sample.txt` & `sample.py`**: Plain text and Python code file.
-- **`sample.json`**: Structured JSON payload.
-- **`sample.zip`**: Valid archive demonstrating safe multi-file extraction.
+- **`sample.json`**: Structured JSON schema payload.
+- **`sample.zip`**: Safe multi-file archive.
 
-**How to test in UI**: Drag any of these files directly into the chat Composer file drop area. Observe upload progress, parsing status chips, and prompt the agent:
-> *"Analyze sample.csv and summarize total revenue by category."*
+**How to test in the UI**:
+1. Drag `sample.csv` and `sample.pdf` into the Composer.
+2. Prompt: *"What are the contents and summaries of both uploaded files?"*
+3. The agent calls `read_file` on both documents and responds with structured tables and summaries.
 
 ---
 
 ## API Overview
 
-All endpoints (except Keycloak auth endpoints) expect an `Authorization: Bearer <token>` header.
+All API endpoints require an `Authorization: Bearer <token>` header (Keycloak access token).
 
 | Endpoint | Method | Description | Throttling |
 |---|---|---|---|
-| `/api/me/` | `GET` | Return authenticated user profile and Keycloak subject | `chat` (60/min) |
-| `/api/threads/` | `GET` | List user's chat threads with aggregated token metrics | `chat` (60/min) |
+| `/api/me/` | `GET` | Return authenticated user profile and subject claim | `chat` (60/min) |
+| `/api/threads/` | `GET` | List user's conversation threads with token usage metrics | `chat` (60/min) |
 | `/api/threads/` | `POST` | Create a new conversation thread | `chat` (60/min) |
 | `/api/threads/<id>/` | `GET` | Retrieve thread details and message history | `chat` (60/min) |
 | `/api/threads/<id>/` | `DELETE` | Delete thread, purge disk files, and drop checkpoints | `chat` (60/min) |
-| `/api/threads/<id>/stream` | `POST` | Stream assistant response via SSE (`token`, `status`, `file`, `done`) | `chat` (60/min) |
-| `/api/threads/<id>/regenerate` | `POST` | Discard last assistant answer, trim checkpoint, and re-run | `chat` (60/min) |
-| `/api/threads/<id>/files/` | `GET` | List uploaded files for the thread | `upload` (60/min) |
-| `/api/threads/<id>/files/` | `POST` | Multipart upload (accepts multiple files per request) | `upload` (60/min) |
+| `/api/threads/<id>/stream` | `POST` | Stream assistant turn via SSE (`token`, `status`, `file`, `done`) | `chat` (60/min) |
+| `/api/threads/<id>/stop` | `POST` | Abort an active streaming generation turn | `chat` (60/min) |
+| `/api/threads/<id>/regenerate` | `POST` | Trim last assistant answer from checkpoint and regenerate | `chat` (60/min) |
+| `/api/threads/<id>/files/` | `GET` | List uploaded files attached to the thread | `upload` (60/min) |
+| `/api/threads/<id>/files/` | `POST` | Multipart upload (accepts single or multiple files) | `upload` (60/min) |
 | `/api/threads/<id>/generated/` | `GET` | List generated files and revisions for the thread | `chat` (60/min) |
-| `/api/files/<id>/download/` | `GET` | Secure binary stream download of an uploaded file | `upload` (60/min) |
-| `/api/generated/<id>/download/` | `GET` | Secure binary stream download of a generated file | `upload` (60/min) |
+| `/api/files/<id>/download/` | `GET` | Authenticated binary download of an uploaded file | `upload` (60/min) |
+| `/api/generated/<id>/download/` | `GET` | Authenticated binary download of a generated file | `upload` (60/min) |
 
 ---
 
-## Troubleshooting
+## Troubleshooting Guide
 
 ### 1. Port Conflicts (3000, 8000, 8080, 5432)
 - **Symptom**: `Bind for 0.0.0.0:8000 failed: port is already allocated`.
-- **Solution**: Check active listeners with `netstat -ano | findstr :8000` (Windows) or `lsof -i :8000` (Linux/macOS) and terminate the conflicting process, or adjust port mappings in `docker-compose.yml`.
+- **Fix**: Check active listeners (`netstat -ano | findstr :8000` on Windows, `lsof -i :8000` on Linux/macOS) and terminate conflicting processes, or adjust port mappings in `docker-compose.yml`.
 
-### 2. Database Connection Failures at Boot
-- **Symptom**: Backend crashes with `psycopg.OperationalError: connection to server on "db:5432" failed`.
-- **Solution**: The `backend` container includes a `depends_on` condition checking `db: service_healthy`. Ensure the database healthcheck passes (`pg_isready`).
+### 2. Keycloak Slow Cold Boot
+- **Symptom**: `Keycloak is initializing...` or 502 Bad Gateway during the first 20 seconds.
+- **Fix**: Keycloak 26 Quarkus takes 15–25 seconds on cold start to import `realm-export.json` and generate RSA keys. Wait until `Keycloak 26.1.3 started in ...ms` appears in `docker compose logs keycloak`.
 
-### 3. Keycloak Slow Startup
-- **Symptom**: `Keycloak is initializing...` or 502 Bad Gateway during first boot.
-- **Solution**: Keycloak 26 Quarkus runtime takes 15–30 seconds on cold start to import `realm-export.json` and generate cryptography keys. Wait until `Keycloak 26.1.3 started in ...ms` appears in `docker compose logs keycloak`.
-
-### 4. Missing LLM Key
+### 3. Missing OpenAI API Key
 - **Symptom**: `Error: OpenAI API key is missing or invalid.`
-- **Solution**: If you do not have an API key, set `FAKE_LLM=1` in `.env` and restart the backend. The platform will operate in deterministic synthetic mode, emulating tool calls, streaming, and file generation without external requests.
+- **Fix**: Add `OPENAI_API_KEY=sk-...` to `.env` and restart the backend. Alternatively, set `FAKE_LLM=1` in `.env` to run full deterministic tool execution and streaming without external API keys.
 
-### 5. File Limits & Rejection
-- **Symptom**: `Upload failed: File exceeds limit of 25.0 MB.` or `ZIP contains directory traversal path`.
-- **Solution**: Adjust `MAX_FILE_SIZE_BYTES` or `MAX_REQUEST_SIZE_BYTES` in `.env`. Malicious ZIP files (containing `..` or absolute paths) are intentionally rejected by security validators.
-
----
-
-## Demo Video Script (3-Act Walkthrough)
-
-### Act 1: Long Thread & Rolling Memory Compaction (0:00 – 1:30)
-- **Action**: Open UI, start a new thread titled *"Quarterly Strategy"*.
-- **Narrate**: *"Watch how the conversation handles continuous context without exceeding model context windows or token budgets."*
-- **Action**: Paste initial project parameters (Project Alpha, Budget $50,000, Target Q3). Continue chatting through several turns.
-- **Callout**: Point to the **Token Badge** in the sidebar: `Tokens: 6,420`.
-- **Demonstrate**: Show that the backend seamlessly invoked `summarize_node`, consolidated the baseline turns into `state.summary`, and kept recent instructions intact. Ask: *"What was our initial budget for Project Alpha?"* Show the model answering accurately from summary memory.
-
-### Act 2: Multi-File Drag-and-Drop & Tabular Deep Dive (1:30 – 3:00)
-- **Action**: Drag `sample.csv` and `sample.docx` from `sample_files/` directly into the Composer.
-- **Demonstrate**: Highlight the real-time upload progress bars and status chips updating from `uploading` -> `parsing` -> `ready`.
-- **Action**: Prompt the model: *"Inspect sample.csv and give me a summary of total sales by region."*
-- **Demonstrate**: Show the real-time status banner: `"Reading file..."`. Show the agent executing `read_file`, receiving bounded chunk data wrapped in prompt-injection boundaries, and rendering markdown tables with calculations.
-
-### Act 3: Artifact Generation & Versioned Revisions (3:00 – 4:30)
-- **Action**: Prompt: *"Generate an executive report in Markdown summarizing this data."*
-- **Demonstrate**: The agent triggers `generate_file(kind="md", name="sales_report.md", ...)`. An SSE `file` event renders a **FileCard** with a `v1` badge, interactive preview, and download button.
-- **Action**: Prompt: *"Update the report to add a Recommendations section at the bottom."*
-- **Demonstrate**: The agent calls `read_generated_spec(file_id)`, retrieves the v1 JSON spec, modifies it, and calls `generate_file(based_on=v1_id)`. The FileCard updates live to `v2` with parent-child linkage. Download the file using authenticated blob streaming.
+### 4. File Upload Limits Exceeded
+- **Symptom**: `Upload failed: File exceeds limit of 25.0 MB.`
+- **Fix**: Adjust `MAX_FILE_SIZE_BYTES` or `MAX_REQUEST_SIZE_BYTES` in `.env`.
 
 ---
 
-## Known Limitations / Architectural Trade-Offs
+## Demo Video Script (5–8 Minute Recording)
 
-1. **In-Process Parsing vs. Distributed Task Queue**: File parsing runs inside an ASGI threadpool. For multi-gigabyte files or heavy OCR, this should be offloaded to Celery/Redis workers.
-2. **Local Volume vs. Cloud Object Storage**: Files are saved to a Docker volume (`/data`). In high-availability multi-node deployments, replace `LocalStorage` with an S3-compatible backend (MinIO / AWS S3).
-3. **No Vector Store / Dense Semantic Search**: Document exploration uses bounded chunks and schema analysis rather than a vector database. Sufficient for short to mid-sized documents, but massive repositories benefit from dedicated vector indexing.
-4. **Single-Node SSE Connections**: SSE streams run directly between the browser and Uvicorn. Horizontal scaling requires Redis Pub/Sub backplanes or SSE gateways.
+### Act 1: Authentication & Long Thread Compaction (0:00 – 2:00)
+- **Action**: Open `http://localhost:3000`. Show Keycloak login screen. Log in with `demo` / `demo1234`.
+- **Action**: Create a new thread *"Executive Strategy"*. Provide initial background: *"The secret project codename is PHOENIX-99 with a budget of $250,000."*
+- **Action**: Demonstrate rolling context. Point out token badge in header (`⚡ tokens`).
+- **Action**: Ask: *"What is the project codename and budget?"* Show the assistant accurately answering from memory.
+
+### Act 2: Multi-File Ingestion & Cross-Document Analysis (2:00 – 4:00)
+- **Action**: Drag and drop `sample.csv` and `sample.pdf` into the composer drop area.
+- **Demonstrate**: Real-time progress bars and status chips updating from `uploading` -> `parsing` -> `ready`.
+- **Action**: Prompt: *"Summarize both uploaded files and calculate total population across cities in the CSV."*
+- **Demonstrate**: Status indicator shows `"Reading file..."`. The agent invokes `read_file`, inspects the bounded chunks, and renders structured Markdown tables with calculations.
+
+### Act 3: File Generation, Preview & Version Revision (4:00 – 5:30)
+- **Action**: Prompt: *"Generate an Excel spreadsheet quarterly_report.xlsx with columns Quarter, Revenue, Expenses and 4 quarters of data."*
+- **Demonstrate**: Real-time status `"Generating and verifying file..."`. SSE `file` event renders a **FileCard** with a `v1` badge, interactive preview, and authenticated download link.
+- **Action**: Prompt: *"Please revise quarterly_report.xlsx to add a Profit column calculated from Revenue minus Expenses."*
+- **Demonstrate**: The agent calls `read_generated_spec(file_id)`, modifies the spec, and produces `v2`. The FileCard updates with the new revision and parent-child linkage.
+
+### Act 4: Live Web Search, Stop & Regenerate (5:30 – 7:00)
+- **Action**: Prompt: *"Search the web for the latest Python release and summarize what changed."*
+- **Demonstrate**: Status shows `"Searching the web..."`. The assistant executes `web_search` and returns results with clickable Markdown citations `[Title](URL)`.
+- **Action**: Send another prompt and click **Stop**. Show immediate stream cancellation. Click **Regenerate** to re-run the turn.
+
+---
+
+## Known Limitations / Not Built
+
+1. **In-Process Parsing vs. Celery Workers**: File parsing executes in an ASGI thread pool (`ThreadPoolExecutor`). For multi-gigabyte files or heavy OCR queues, this should be offloaded to Celery workers with Redis.
+2. **Local Volume vs. Cloud Object Storage**: Files are stored on a Docker volume (`/data`). In multi-node production clusters, replace `LocalStorage` with S3/GCS via `django-storages`.
+3. **No Vector RAG Database**: Document exploration relies on structured tools (`read_file` with section and row chunking) and schema analysis. For 500+ page books, pgvector or a dedicated vector database would be beneficial.
+4. **Single-Node SSE Connections**: SSE connections run directly over HTTP. Horizontal scaling across multiple ASGI server replicas requires Redis Pub/Sub backplanes for connection fan-out.

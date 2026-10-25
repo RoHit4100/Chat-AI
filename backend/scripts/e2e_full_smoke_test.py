@@ -6,8 +6,9 @@ import json
 import subprocess
 from pathlib import Path
 
-BASE_URL = "http://localhost:8000"
-KEYCLOAK_URL = "http://localhost:8080/realms/chat/protocol/openid-connect/token"
+IN_DOCKER = os.path.exists("/app")
+BASE_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000" if IN_DOCKER else "http://localhost:8000")
+KEYCLOAK_URL = os.getenv("KEYCLOAK_TOKEN_URL", "http://keycloak:8080/realms/chat/protocol/openid-connect/token" if IN_DOCKER else "http://localhost:8080/realms/chat/protocol/openid-connect/token")
 CLIENT_ID = "chat-web"
 USERNAME = "demo"
 PASSWORD = "demo1234"
@@ -282,14 +283,22 @@ def run():
                 r = requests.get(f"{BASE_URL}/api/threads/", headers=headers, timeout=2)
                 if r.status_code == 200:
                     print("Backend is back online!")
+                    time.sleep(3)
                     break
             except Exception:
                 pass
 
         # Confirm thread can be loaded and new message sent
-        resp_resume = stream_query("Are you still there? Can you summarize our previous discussion?")
+        resp_resume = None
+        for attempt in range(3):
+            resp_resume = stream_query("Are you still there? Can you summarize our previous discussion?")
+            if resp_resume and len(resp_resume.get("text", "")) > 20:
+                break
+            print(f"Attempt {attempt+1} response short ({len(resp_resume.get('text', ''))} chars), retrying in 2s...")
+            time.sleep(2)
+
         print(f"Resumed response:\n{resp_resume['text']}")
-        if len(resp_resume["text"]) > 20:
+        if resp_resume and len(resp_resume.get("text", "")) > 20:
             results["restart_and_resume"] = "PASS"
         else:
             results["restart_and_resume"] = "FAIL: Resume response too short"

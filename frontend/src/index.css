@@ -1609,3 +1609,87 @@ html, body, #root {
   }
 }
 
+/* ── Mobile & Responsive Design ─────────────────────────────────────────── */
+.mobile-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mobile-menu-btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-focus);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    transform: translateX(-100%);
+    z-index: 50;
+    box-shadow: none;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.7);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    z-index: 45;
+  }
+
+  .messages-container {
+    padding: 16px 12px 140px 12px;
+  }
+
+  .composer-wrapper {
+    padding: 0 8px 12px 8px;
+  }
+
+  .composer-box {
+    padding: 10px 12px;
+  }
+
+  .chat-navbar {
+    padding: 10px 12px;
+  }
+
+  .current-thread-title {
+    max-width: 180px;
+    font-size: 14px;
+  }
+
+  .file-card-container {
+    max-width: 100%;
+  }
+
+  .message-bubble {
+    max-width: 95%;
+  }
+}
+
