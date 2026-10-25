@@ -131,6 +131,10 @@ async def stream_chat_turn(
                             yield format_sse("status", {"node": "tools", "status": "Generating and verifying file..."})
                         elif name == "inspect_file":
                             yield format_sse("status", {"node": "tools", "status": "Inspecting file metadata..."})
+                        elif name == "web_search":
+                            yield format_sse("status", {"node": "tools", "status": "Searching the web..."})
+                        elif name == "browse_web_page":
+                            yield format_sse("status", {"node": "tools", "status": "Browsing web page..."})
 
                 # Emit status when tool call chunks start arriving for generate_file
                 tc_chunks = getattr(chunk_msg, "tool_call_chunks", None) or []

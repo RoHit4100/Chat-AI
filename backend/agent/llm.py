@@ -64,6 +64,12 @@ class DeterministicFakeChatModel(BaseChatModel):
         if "call tool" in content or "test tool" in content:
             return "", [{"name": "inspect_file", "args": {"file_id": "test_id"}, "id": "call_web_0", "type": "tool_call"}]
 
+        if "web_search" in content or "search web" in content or "search for" in content:
+            return "", [{"name": "web_search", "args": {"query": "python latest"}, "id": "call_web_search_0", "type": "tool_call"}]
+
+        if "browse_web_page" in content or "browse url" in content or "browse page" in content:
+            return "", [{"name": "browse_web_page", "args": {"url": "https://example.com"}, "id": "call_browse_0", "type": "tool_call"}]
+
         if "simulate truncate" in content or "truncated spec" in content:
             return "", [{
                 "name": "generate_file",

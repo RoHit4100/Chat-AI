@@ -74,3 +74,8 @@ cycler==0.12.1
 fonttools==4.67.0
 kiwisolver==1.5.1
 pyparsing==3.3.3
+
+# Web Search & Browsing
+ddgs==9.16.1
+primp==2.0.1
+httpx==0.28.1
