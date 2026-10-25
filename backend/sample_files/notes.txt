@@ -1,0 +1,7 @@
+Team sync notes, 6 October 2025
+
+- Decision: the dashboard will launch with four regions: North, South, East and West.
+- Aditi will share the deduplicated customer list by Friday.
+- Karan will fix the slow loading of the revenue chart (currently about 6 seconds).
+- Action item for Meera: book the training rooms for February 2026.
+- Open question: should export to PDF be available to all users or only managers?

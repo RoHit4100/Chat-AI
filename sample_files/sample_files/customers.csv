@@ -1,0 +1,11 @@
+customer_id,name,city,plan,monthly_spend_inr,signup_date
+C001,Asha Verma,Mumbai,Pro,4500,2024-02-11
+C002,Rahul Mehta,Pune,Basic,1200,2024-03-05
+C003,Neha Kulkarni,Thane,Pro,4500,2024-03-19
+C004,Sanjay Patil,Nashik,Enterprise,12000,2024-04-02
+C005,Priya Nair,Bengaluru,Basic,1200,2024-05-14
+C006,Imran Shaikh,Mumbai,Pro,4500,2024-06-21
+C007,Divya Rao,Hyderabad,Enterprise,12000,2024-07-08
+C008,Karthik Iyer,Chennai,Basic,1200,2024-08-30
+C009,Pooja Desai,Pune,Pro,4500,2024-09-12
+C010,Arjun Singh,Delhi,Enterprise,12000,2024-10-25

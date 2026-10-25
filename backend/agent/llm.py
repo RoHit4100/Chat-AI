@@ -6,6 +6,7 @@ from langchain_core.messages import (
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
+    SystemMessage,
     ToolMessage,
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
@@ -58,6 +59,16 @@ class DeterministicFakeChatModel(BaseChatModel):
             if tool_error_count >= 3:
                 return "Tool execution failed after 3 consecutive attempts. Stopping loop and explaining failure.", None
             return f"Processed tool output: {last_msg.content}. Completed.", None
+
+        # Check if last message is multimodal (e.g. vision model call with image_url)
+        if isinstance(getattr(last_msg, "content", None), list):
+            has_image = any(isinstance(part, dict) and part.get("type") == "image_url" for part in last_msg.content)
+            if has_image:
+                return (
+                    "The image is a horizontal bar chart titled 'Website Traffic Sources' showing traffic breakdown: "
+                    "Organic search: 42,000; Direct: 28,500; Referral: 15,200; Social media: 9,800; Email: 6,400.",
+                    None,
+                )
 
         # Check user message text
         content = str(getattr(last_msg, "content", "")).lower()
@@ -188,8 +199,21 @@ class DeterministicFakeChatModel(BaseChatModel):
                 "type": "tool_call",
             }]
 
+        target_file_id = "1"
+        for m in messages:
+            if isinstance(m, SystemMessage) and "Current File Manifest:" in str(m.content):
+                import re
+                match = re.search(r"'id':\s*'([^']+)'", str(m.content))
+                if match:
+                    target_file_id = match.group(1)
+                break
+
+        if any(w in content for w in ["image", "chart", "traffic", "photo", "screenshot"]):
+            q = getattr(last_msg, "content", "") if isinstance(getattr(last_msg, "content", ""), str) else "Describe what this image shows"
+            return "", [{"name": "read_file", "args": {"file_id": target_file_id, "question": q}, "id": "call_read_img_0", "type": "tool_call"}]
+
         if "read" in content or "what " in content or "uploaded" in content:
-            return "", [{"name": "read_file", "args": {"file_id": "1"}, "id": "call_read_0", "type": "tool_call"}]
+            return "", [{"name": "read_file", "args": {"file_id": target_file_id}, "id": "call_read_0", "type": "tool_call"}]
 
         return "This is a deterministic fake response.", None
 

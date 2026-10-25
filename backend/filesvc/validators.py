@@ -40,7 +40,6 @@ ALLOWED_EXTENSIONS = {
     ".jpeg": {"image/jpeg"},
     ".gif": {"image/gif"},
     ".webp": {"image/webp"},
-    ".bmp": {"image/bmp", "image/x-ms-bmp"},
     ".svg": {"image/svg+xml", "text/xml", "text/plain", "application/xml"},
     ".txt": {"text/plain"},
     ".md": {"text/plain", "text/markdown"},

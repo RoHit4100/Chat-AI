@@ -1,0 +1,8 @@
+{
+  "app": "orion-dashboard",
+  "version": "1.4.2",
+  "environment": "staging",
+  "features": {"export_pdf": true, "dark_mode": false, "beta_charts": true},
+  "limits": {"max_upload_mb": 25, "rate_limit_per_minute": 60},
+  "regions": ["North", "South", "East", "West"]
+}

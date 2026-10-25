@@ -135,11 +135,12 @@ def read_file(
     chunk: int | None = None,
     row_start: int | None = None,
     row_end: int | None = None,
+    question: str | None = None,
     config: RunnableConfig = None,
 ) -> str:
     """Read contents of an uploaded file by file_id (or filename from manifest) by page (1-based) or chunk index (0-based) in bounded size.
     For spreadsheets, specify row_start and row_end (1-based).
-    For images, returns dimensions and visual payload.
+    For images, transcribes visual content, charts, values, and text. Optionally specify question to focus visual analysis.
     """
     import re
     cfg_configurable = (config or {}).get("configurable", {})
@@ -212,17 +213,44 @@ def read_file(
                 lines.append(str(r))
             output = "\n".join(lines)
 
-    # Handle images (return dimensions and vision model data)
-    elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg") or uf.mime.startswith("image/"):
-        image_info = parsed_data.get("image_info") or parsed_data.get("metadata") or {}
-        w = image_info.get("width", "unknown")
-        h = image_info.get("height", "unknown")
-        fmt = image_info.get("format", ext.lstrip(".").upper())
-        mode = image_info.get("mode", "RGB")
-        output = (
-            f"Image '{uf.name}': Dimensions {w}x{h} px, format {fmt}, mode {mode}.\n"
-            f"Vision Model Payload ready for file_id {uf.id} ({uf.path})."
+    # Handle images (vision analysis, OCR fallback, and cached descriptions)
+    elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp") or uf.mime.startswith("image/"):
+        if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            return f"Error: Unsupported image format '{ext}'. Supported formats are PNG, JPEG, WEBP, and GIF."
+
+        import hashlib
+        norm_q = (question or "").strip().lower()
+        q_hash = hashlib.sha256(norm_q.encode("utf-8")).hexdigest()[:16]
+
+        structured = parsed_data.get("structured_data") or {}
+        vision_cache = structured.get("vision_cache") or parsed_data.get("vision_cache") or {}
+
+        # Return cached answer if available for this question hash
+        if q_hash in vision_cache:
+            return wrap_untrusted_content(vision_cache[q_hash], uf.name)
+
+        from filesvc.image_vision import analyze_image_with_vision
+        desc_text, source = analyze_image_with_vision(
+            uf.path,
+            original_filename=uf.name,
+            question=question,
+            is_summary=False,
         )
+
+        if source in ("vision", "ocr") and desc_text:
+            vision_cache[q_hash] = desc_text
+            if not isinstance(structured, dict):
+                structured = {}
+            structured["vision_cache"] = vision_cache
+            parsed_data["structured_data"] = structured
+            parsed_data["vision_cache"] = vision_cache
+            if uf.parsed_path:
+                storage.save_parsed(str(uf.id), parsed_data)
+
+        if source == "error":
+            return desc_text
+
+        output = desc_text
 
     # Handle text, documents, PDF, PPTX, JSON, ZIP
     else:
